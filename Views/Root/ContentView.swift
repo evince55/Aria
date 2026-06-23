@@ -10,6 +10,7 @@ struct ContentView: View {
 
     @State private var selectedTab: AppTab = .favorites
     @State private var showFullPlayer = false
+    @Namespace private var playerNamespace
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -36,15 +37,16 @@ struct ContentView: View {
                     .frame(maxHeight: .infinity)
 
                 if playerManager.currentTrack != nil {
-                    MiniPlayerView(playerManager: playerManager) {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                            showFullPlayer = true
-                        }
-                    }
+                    MiniPlayerView(
+                        playerManager: playerManager,
+                        namespace: playerNamespace,
+                        onTap: { expandPlayer() }
+                    )
                 }
 
                 customTabBar
             }
+            .padding(.bottom, DS.Spacing.sm)
 
             if showFullPlayer {
                 FullScreenPlayerView(
@@ -53,13 +55,9 @@ struct ContentView: View {
                     playlistsManager: playlistsManager,
                     recentlyPlayedManager: recentlyPlayedManager,
                     themeManager: themeManager,
-                    onDismiss: {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                            showFullPlayer = false
-                        }
-                    }
+                    namespace: playerNamespace,
+                    onDismiss: { dismissPlayer() }
                 )
-                .transition(.move(edge: .bottom))
                 .zIndex(100)
             }
         }
@@ -78,6 +76,20 @@ struct ContentView: View {
                 playlistsManager.flushPendingWrites()
                 recentlyPlayedManager.flushPendingWrites()
             }
+        }
+    }
+
+    private func expandPlayer() {
+        Haptics.light()
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) {
+            showFullPlayer = true
+        }
+    }
+
+    private func dismissPlayer() {
+        Haptics.light()
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            showFullPlayer = false
         }
     }
 
@@ -130,34 +142,66 @@ struct ContentView: View {
             tabBarButton(tab: .search, icon: "magnifyingglass", label: "Search")
             tabBarButton(tab: .more, icon: "ellipsis", label: "More")
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 6)
-        .background(themeManager.surface)
+        .padding(.horizontal, DS.Spacing.sm)
+        .padding(.vertical, DS.Spacing.xs)
+        .background(
+            ZStack {
+                Capsule(style: .continuous)
+                    .fill(.ultraThinMaterial)
+                Capsule(style: .continuous)
+                    .fill(themeManager.tokens.surface.opacity(0.4))
+            }
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(themeManager.tokens.hairline, lineWidth: 0.5)
+        )
+        .clipShape(Capsule(style: .continuous))
+        .padding(.horizontal, DS.Spacing.lg)
+        .miniPlayerShadow()
     }
-
-    private var allowedFillIcons: Set<String> { ["heart"] }
 
     private func tabBarButton(tab: AppTab, icon: String, label: String) -> some View {
-        Button {
-            selectedTab = tab
-        } label: {
-            VStack(spacing: 2) {
-                let selectedIcon = allowedFillIcons.contains(icon)
-                    ? "\(icon).fill"
-                    : icon
-                Image(systemName: selectedTab == tab ? selectedIcon : icon)
-                    .font(.system(size: 18, weight: selectedTab == tab ? .semibold : .regular))
-                    .frame(height: 22)
-                Text(label)
-                    .font(.system(size: 10, weight: selectedTab == tab ? .semibold : .regular))
+        let isSelected = selectedTab == tab
+        let fillableIcons: Set<String> = ["heart"]
+        let symbolName = (isSelected && fillableIcons.contains(icon)) ? "\(icon).fill" : icon
+        let accent = themeManager.tokens.accent
+
+        return Button {
+            guard !isSelected else { return }
+            Haptics.selection()
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                selectedTab = tab
             }
-            .foregroundColor(selectedTab == tab ? themeManager.theme.accentColor : themeManager.textSecondary)
+        } label: {
+            VStack(spacing: 3) {
+                ZStack {
+                    if isSelected {
+                        Capsule(style: .continuous)
+                            .fill(accent.opacity(0.20))
+                            .matchedGeometryEffect(id: "tabIndicator", in: indicatorNamespace)
+                            .frame(width: 56, height: 28)
+                    }
+                    Image(systemName: symbolName)
+                        .font(.system(size: 17, weight: isSelected ? .semibold : .regular))
+                        .foregroundColor(isSelected ? accent : themeManager.tokens.textSecondary)
+                        .frame(width: 56, height: 28)
+                }
+                Text(label)
+                    .font(.system(size: 10, weight: isSelected ? .semibold : .medium))
+                    .foregroundColor(isSelected ? accent : themeManager.tokens.textSecondary)
+            }
             .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
+
+    @Namespace private var indicatorNamespace
 }
 
-enum AppTab {
+enum AppTab: Hashable {
     case favorites, playlists, search, more
 }

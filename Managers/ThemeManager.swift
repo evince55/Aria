@@ -26,27 +26,67 @@ import Combine
         settings.save()
     }
 
+    // MARK: - Token API (preferred)
+
+    var tokens: DesignTokens {
+        DesignTokens(isDark: isDarkMode, accent: theme.accentColor)
+    }
+
+    // MARK: - Legacy convenience (kept for existing call-sites)
+
+    var background: Color { tokens.background }
+    var surface: Color { tokens.surface }
+    var elevatedSurface: Color { tokens.elevatedSurface }
+    var textPrimary: Color { tokens.textPrimary }
+    var textSecondary: Color { tokens.textSecondary }
+    var dividerColor: Color { tokens.dividerColor }
+}
+
+/// Strongly-typed design tokens that depend on the current theme & mode.
+struct DesignTokens {
+    let isDark: Bool
+    let accent: Color
+
     var background: Color {
-        isDarkMode ? Color.black : Color.white
+        isDark ? Color(red: 0.04, green: 0.04, blue: 0.05) : Color(red: 0.98, green: 0.98, blue: 0.99)
     }
 
     var surface: Color {
-        isDarkMode ? Color(white: 0.08) : Color(white: 0.95)
+        isDark ? Color(white: 0.10) : Color(white: 0.96)
     }
 
     var elevatedSurface: Color {
-        isDarkMode ? Color(white: 0.12) : Color.white
+        isDark ? Color(white: 0.14) : Color.white
+    }
+
+    /// Slightly tinted surface used for "card" backgrounds.
+    var cardSurface: Color {
+        isDark ? Color(white: 0.12) : Color.white
     }
 
     var textPrimary: Color {
-        isDarkMode ? Color.white : Color.black
+        isDark ? Color.white : Color(red: 0.07, green: 0.07, blue: 0.08)
     }
 
     var textSecondary: Color {
-        isDarkMode ? Color(white: 0.6) : Color(white: 0.4)
+        isDark ? Color(white: 0.62) : Color(white: 0.45)
     }
 
     var dividerColor: Color {
-        isDarkMode ? Color(white: 0.15) : Color(white: 0.85)
+        isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.08)
+    }
+
+    var hairline: Color {
+        isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
+    }
+
+    /// For the big circular play button background.
+    var playButtonBackground: Color {
+        isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.06)
+    }
+
+    /// Soft accent wash for active rows / pills.
+    var accentSubtle: Color {
+        accent.opacity(0.18)
     }
 }

@@ -24,31 +24,45 @@ final class ImageMemoryCache {
     }
 }
 
-/// SwiftUI image view with a memory cache. Falls back to `placeholder` while
-/// loading, then shows the cached or freshly fetched image.
+/// SwiftUI image view with a memory cache. While loading, shows a
+/// `ShimmerView` placeholder. On success, crossfades into the image.
 struct AsyncCachedImage<Placeholder: View>: View {
     let url: URL?
+    var cornerRadius: CGFloat = 0
     @ViewBuilder let placeholder: () -> Placeholder
 
     @State private var image: UIImage?
     @State private var loadTask: Task<Void, Never>?
+    @State private var didFail: Bool = false
 
     init(
         url: URL?,
-        @ViewBuilder placeholder: @escaping () -> Placeholder = { Rectangle().fill(Color.gray.opacity(0.2)) }
+        cornerRadius: CGFloat = 0,
+        @ViewBuilder placeholder: @escaping () -> Placeholder = { ShimmerView() }
     ) {
         self.url = url
+        self.cornerRadius = cornerRadius
         self.placeholder = placeholder
     }
 
     var body: some View {
-        Group {
+        ZStack {
             if let image {
-                Image(uiImage: image).resizable()
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .transition(.opacity.animation(.easeIn(duration: 0.18)))
+            } else if didFail {
+                ZStack {
+                    Color.gray.opacity(0.15)
+                    Image(systemName: "photo")
+                        .foregroundColor(.gray.opacity(0.5))
+                }
             } else {
                 placeholder()
             }
         }
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .task(id: url) {
             await load()
         }
@@ -66,7 +80,9 @@ struct AsyncCachedImage<Placeholder: View>: View {
             ImageMemoryCache.shared.store(img, for: url)
             image = img
         } catch {
-            // Silent: placeholder stays.
+            if !Task.isCancelled {
+                didFail = true
+            }
         }
     }
 }

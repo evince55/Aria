@@ -6,18 +6,20 @@ struct FavoritesView: View {
     @ObservedObject var recentlyPlayedManager: RecentlyPlayedManager
     @ObservedObject var themeManager: ThemeManager
 
+    private var tokens: DesignTokens { themeManager.tokens }
+
     var body: some View {
         ZStack {
-            themeManager.background.ignoresSafeArea()
+            tokens.background.ignoresSafeArea()
 
             if favoritesManager.tracks.isEmpty {
                 emptyState
             } else {
                 VStack(spacing: 0) {
                     shuffleButton
-                        .padding(.horizontal, 16)
-                        .padding(.top, 12)
-                        .padding(.bottom, 8)
+                        .padding(.horizontal, DS.Spacing.lg)
+                        .padding(.top, DS.Spacing.md)
+                        .padding(.bottom, DS.Spacing.lg)
 
                     listContent
                 }
@@ -26,40 +28,70 @@ struct FavoritesView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "heart")
-                .font(.system(size: 48))
-                .foregroundColor(themeManager.textSecondary)
-            Text("No Favorites")
-                .font(.title2)
-                .fontWeight(.semibold)
-                .foregroundColor(themeManager.textPrimary)
-            Text("Tap the heart on any song to add it here")
-                .font(.subheadline)
-                .foregroundColor(themeManager.textSecondary)
+        VStack(spacing: DS.Spacing.lg) {
+            Spacer()
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [tokens.accent.opacity(0.35), tokens.accent.opacity(0.1)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 140, height: 140)
+                Image(systemName: "heart.fill")
+                    .font(.system(size: 56, weight: .light))
+                    .foregroundColor(tokens.accent)
+            }
+            .softShadow()
+
+            VStack(spacing: DS.Spacing.sm) {
+                Text("No Favorites Yet")
+                    .font(DS.Typography.titleLarge)
+                    .foregroundColor(tokens.textPrimary)
+                Text("Tap the heart on any song to add it here.")
+                    .font(DS.Typography.body)
+                    .foregroundColor(tokens.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, DS.Spacing.xl)
+
+            Spacer()
         }
+        .padding(.bottom, 80)
     }
 
     private var shuffleButton: some View {
         Button {
+            Haptics.medium()
             if let random = favoritesManager.tracks.randomElement() {
                 playerManager.play(random)
                 recentlyPlayedManager.trackPlayed(random)
             }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: DS.Spacing.sm) {
                 Image(systemName: "shuffle")
-                    .font(.body)
+                    .font(.system(size: 16, weight: .bold))
                 Text("Shuffle Play")
-                    .font(.body)
-                    .fontWeight(.semibold)
+                    .font(DS.Typography.bodyEm)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 12)
-            .background(themeManager.theme.accentColor)
             .foregroundColor(.white)
-            .cornerRadius(12)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, DS.Spacing.md)
+            .background(
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [tokens.accent, tokens.accent.opacity(0.8)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+            )
+            .softShadow()
         }
+        .buttonStyle(.plain)
     }
 
     private var listContent: some View {
@@ -67,63 +99,70 @@ struct FavoritesView: View {
             ForEach(favoritesManager.groupedByLetter(), id: \.letter) { group in
                 Section {
                     ForEach(group.tracks) { track in
-                        Button {
-                            playerManager.play(track)
-                            recentlyPlayedManager.trackPlayed(track)
-                        } label: {
-                            HStack(spacing: 12) {
-                                thumbnail(for: track)
-
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(track.title)
-                                        .font(.subheadline)
-                                        .fontWeight(.medium)
-                                        .foregroundColor(themeManager.textPrimary)
-                                        .lineLimit(1)
-                                    Text(track.artist)
-                                        .font(.caption)
-                                        .foregroundColor(themeManager.textSecondary)
-                                        .lineLimit(1)
-                                }
-                                Spacer()
-                                Image(systemName: "ellipsis")
-                                    .font(.caption)
-                                    .foregroundColor(themeManager.textSecondary)
-                            }
-                            .padding(.vertical, 2)
-                        }
-                        .addToQueueGesture(playerManager: playerManager, track: track)
+                        trackRow(track)
+                            .listRowBackground(tokens.background)
+                            .listRowSeparatorTint(tokens.hairline)
+                            .listRowInsets(EdgeInsets(top: 4, leading: DS.Spacing.lg, bottom: 4, trailing: DS.Spacing.lg))
                     }
                     .onDelete { offsets in
                         guard let idx = offsets.first else { return }
                         let track = group.tracks[idx]
+                        Haptics.warning()
                         favoritesManager.remove(track)
                     }
                 } header: {
-                    Text(group.letter)
-                        .font(.headline)
-                        .fontWeight(.bold)
-                        .foregroundColor(themeManager.textPrimary)
+                    HStack {
+                        SectionLabel(title: group.letter, tokens: tokens)
+                        Spacer()
+                    }
+                    .padding(.horizontal, DS.Spacing.lg)
+                    .padding(.bottom, DS.Spacing.xs)
                 }
+            }
+
+            Section {
+                Color.clear.frame(height: 80)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
-        .background(themeManager.background)
-        .safeAreaInset(edge: .bottom) {
-            HStack {
-                Spacer()
-                Text("\(favoritesManager.tracks.count) tracks")
-                    .font(.caption)
-                    .foregroundColor(themeManager.textSecondary)
-                Spacer()
-            }
-            .padding(.vertical, 8)
-            .background(themeManager.background)
-        }
     }
 
-    private func thumbnail(for track: Track) -> some View {
-        TrackThumbnail(url: track.thumbnailURL, size: 48)
+    private func trackRow(_ track: Track) -> some View {
+        Button {
+            Haptics.light()
+            playerManager.play(track)
+            recentlyPlayedManager.trackPlayed(track)
+        } label: {
+            HStack(spacing: DS.Spacing.md) {
+                TrackThumbnail(url: track.thumbnailURL, size: 48, cornerRadius: DS.Radius.sm)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.title)
+                        .font(DS.Typography.bodyEm)
+                        .lineLimit(1)
+                        .foregroundColor(playerManager.currentTrack?.id == track.id ? tokens.accent : tokens.textPrimary)
+                    HStack(spacing: 6) {
+                        if playerManager.currentTrack?.id == track.id {
+                            NowPlayingIndicator(isPlaying: playerManager.isPlaying, accent: tokens.accent)
+                        }
+                        Text(track.artist)
+                            .font(DS.Typography.caption)
+                            .lineLimit(1)
+                            .foregroundColor(tokens.textSecondary)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(tokens.textSecondary)
+                    .frame(width: 24, height: 24)
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .addToQueueGesture(playerManager: playerManager, track: track)
     }
 }

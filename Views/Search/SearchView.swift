@@ -15,6 +15,7 @@ struct SearchView: View {
     @State private var hasSearched = false
 
     private let searchService: YouTubeSearchService
+    private var tokens: DesignTokens { themeManager.tokens }
 
     init(playerManager: PlayerManager, recentlyPlayedManager: RecentlyPlayedManager, themeManager: ThemeManager, settingsManager: SettingsManager, selectedTab: Binding<AppTab>) {
         self.playerManager = playerManager
@@ -28,7 +29,7 @@ struct SearchView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                themeManager.background.ignoresSafeArea()
+                tokens.background.ignoresSafeArea()
 
                 if hasSearched || !query.isEmpty {
                     searchResultsList
@@ -37,7 +38,8 @@ struct SearchView: View {
                 }
             }
             .navigationTitle("Search")
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always))
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
+                        prompt: "Songs, artists, videos")
             .onChange(of: query) { newQuery in
                 errorMessage = nil
                 searchTask?.cancel()
@@ -58,9 +60,10 @@ struct SearchView: View {
                 }
             }
             .overlay {
-                if isSearching {
+                if isSearching && results.isEmpty {
                     ProgressView()
-                        .tint(themeManager.theme.accentColor)
+                        .tint(tokens.accent)
+                        .scaleEffect(1.1)
                 }
             }
         }
@@ -70,99 +73,127 @@ struct SearchView: View {
 
     private var browseContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: DS.Spacing.xl) {
                 searchHistorySection
                 recentlyPlayedSection
                 trendingSection
             }
-            .padding(.bottom, 32)
+            .padding(.bottom, DS.Spacing.xxl)
         }
     }
 
     private var searchHistorySection: some View {
         Group {
             if !settingsManager.searchHistory.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: DS.Spacing.sm) {
                     HStack {
-                        Text("Recent Searches")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                            .foregroundColor(themeManager.textPrimary)
+                        SectionLabel(title: "Recent searches", tokens: tokens)
                         Spacer()
                         Button {
+                            Haptics.light()
                             settingsManager.clearSearchHistory()
                         } label: {
                             Text("Clear")
-                                .font(.caption)
-                                .foregroundColor(themeManager.theme.accentColor)
+                                .font(DS.Typography.captionStrong)
+                                .foregroundColor(tokens.accent)
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, DS.Spacing.lg)
 
-                    ForEach(settingsManager.searchHistory, id: \.self) { item in
-                        Button {
-                            query = item
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: "clock")
-                                    .font(.caption)
-                                    .foregroundColor(themeManager.textSecondary)
-                                Text(item)
-                                    .font(.subheadline)
-                                    .foregroundColor(themeManager.textPrimary)
-                                    .lineLimit(1)
-                                Spacer()
+                    VStack(spacing: 0) {
+                        ForEach(settingsManager.searchHistory, id: \.self) { item in
+                            searchHistoryRow(item)
+                            if item != settingsManager.searchHistory.last {
+                                Divider().background(tokens.hairline).padding(.leading, 56)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
                         }
                     }
+                    .background(
+                        RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                            .fill(tokens.surface)
+                    )
+                    .padding(.horizontal, DS.Spacing.lg)
                 }
             }
         }
     }
 
+    private func searchHistoryRow(_ item: String) -> some View {
+        Button {
+            Haptics.selection()
+            query = item
+        } label: {
+            HStack(spacing: DS.Spacing.md) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 14))
+                    .foregroundColor(tokens.textSecondary)
+                    .frame(width: 22)
+                Text(item)
+                    .font(DS.Typography.body)
+                    .foregroundColor(tokens.textPrimary)
+                    .lineLimit(1)
+                Spacer()
+                Button {
+                    Haptics.light()
+                    settingsManager.searchHistory.removeAll { $0 == item }
+                    settingsManager.save()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(tokens.textSecondary)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, DS.Spacing.md)
+            .padding(.vertical, DS.Spacing.md)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
     private var recentlyPlayedSection: some View {
         Group {
             if !recentlyPlayedManager.recentlyPlayed.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Based on Your Listening")
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .foregroundColor(themeManager.textPrimary)
-                        .padding(.horizontal, 16)
+                VStack(alignment: .leading, spacing: DS.Spacing.md) {
+                    SectionLabel(title: "Based on your listening", tokens: tokens)
+                        .padding(.horizontal, DS.Spacing.lg)
 
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 2), spacing: 10) {
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.md), count: 2), spacing: DS.Spacing.md) {
                         ForEach(recentlyPlayedManager.recentlyPlayed.prefix(8)) { track in
                             trackCard(track)
                         }
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, DS.Spacing.lg)
                 }
             }
         }
     }
 
     private var trendingSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Trending")
-                .font(.headline)
-                .fontWeight(.semibold)
-                .foregroundColor(themeManager.textPrimary)
-                .padding(.horizontal, 16)
+        VStack(alignment: .leading, spacing: DS.Spacing.md) {
+            SectionLabel(title: "Trending", tokens: tokens)
+                .padding(.horizontal, DS.Spacing.lg)
 
             if recentlyPlayedManager.recentlyPlayed.isEmpty {
-                Text("Start searching and listening to see trends")
-                    .font(.subheadline)
-                    .foregroundColor(themeManager.textSecondary)
-                    .padding(.horizontal, 16)
+                VStack(spacing: DS.Spacing.sm) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 28))
+                        .foregroundColor(tokens.textSecondary)
+                    Text("Start searching and listening to see trends")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(tokens.textSecondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, DS.Spacing.lg)
             } else {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: 4), spacing: 10) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.md), count: 3), spacing: DS.Spacing.md) {
                     ForEach(recentlyPlayedManager.recentlyPlayed.prefix(20)) { track in
-                        smallTrackCard(track)
+                        tileCard(track)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, DS.Spacing.lg)
             }
         }
     }
@@ -172,84 +203,153 @@ struct SearchView: View {
     private var searchResultsList: some View {
         List {
             if let errorMessage {
-                Text(errorMessage)
-                    .font(.caption)
-                    .foregroundColor(.red)
+                errorPill(errorMessage)
                     .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 0, leading: DS.Spacing.lg, bottom: DS.Spacing.sm, trailing: DS.Spacing.lg))
             }
 
-            ForEach(results) { track in
-                Button {
-                    playerManager.play(track)
-                    recentlyPlayedManager.trackPlayed(track)
-                    selectedTab = .favorites
-                } label: {
-                    HStack(spacing: 12) {
-                        TrackThumbnail(url: track.thumbnailURL, size: 56, cornerRadius: 8)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(track.title)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                                .foregroundColor(themeManager.textPrimary)
-                                .lineLimit(2)
-                            Text(track.artist)
-                                .font(.caption)
-                                .foregroundColor(themeManager.textSecondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    .padding(.vertical, 2)
+            if isSearching && results.isEmpty {
+                ForEach(0..<6, id: \.self) { _ in
+                    skeletonRow
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 4, leading: DS.Spacing.lg, bottom: 4, trailing: DS.Spacing.lg))
                 }
-                .addToQueueGesture(playerManager: playerManager, track: track)
-                .listRowBackground(themeManager.background)
+            } else if results.isEmpty && !isSearching {
+                emptyResultsView
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            } else {
+                ForEach(results) { track in
+                    let isCurrent = playerManager.currentTrack?.id == track.id
+                    Button {
+                        Haptics.light()
+                        playerManager.play(track)
+                        recentlyPlayedManager.trackPlayed(track)
+                        selectedTab = .favorites
+                    } label: {
+                        TrackRow(track: track, themeManager: themeManager, playerManager: playerManager)
+                            .padding(.horizontal, 4)
+                    }
+                    .addToQueueGesture(playerManager: playerManager, track: track)
+                    .listRowBackground(tokens.background)
+                    .listRowSeparatorTint(tokens.hairline)
+                    .listRowInsets(EdgeInsets(top: 4, leading: DS.Spacing.lg, bottom: 4, trailing: DS.Spacing.lg))
+                }
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
     }
 
+    private func errorPill(_ message: String) -> some View {
+        HStack(spacing: DS.Spacing.sm) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+            Text(message)
+                .font(DS.Typography.caption)
+                .foregroundColor(tokens.textPrimary)
+            Spacer()
+        }
+        .padding(DS.Spacing.md)
+        .background(
+            RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                .fill(Color.orange.opacity(0.12))
+        )
+    }
+
+    private var skeletonRow: some View {
+        HStack(spacing: DS.Spacing.md) {
+            ShimmerView(cornerRadius: DS.Radius.sm)
+                .frame(width: 48, height: 48)
+            VStack(alignment: .leading, spacing: 6) {
+                ShimmerView(cornerRadius: 4)
+                    .frame(height: 12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                ShimmerView(cornerRadius: 4)
+                    .frame(width: 120, height: 10)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var emptyResultsView: some View {
+        VStack(spacing: DS.Spacing.md) {
+            Spacer(minLength: 40)
+            ZStack {
+                Circle()
+                    .fill(tokens.surface)
+                    .frame(width: 96, height: 96)
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 36, weight: .light))
+                    .foregroundColor(tokens.textSecondary)
+            }
+            Text("No matches")
+                .font(DS.Typography.titleMedium)
+                .foregroundColor(tokens.textPrimary)
+            Text("Try a different search term")
+                .font(DS.Typography.caption)
+                .foregroundColor(tokens.textSecondary)
+            Spacer(minLength: 40)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
     // MARK: - Track Cards
 
     private func trackCard(_ track: Track) -> some View {
         Button {
+            Haptics.light()
             playerManager.play(track)
             recentlyPlayedManager.trackPlayed(track)
             selectedTab = .favorites
         } label: {
-            HStack(spacing: 10) {
-                TrackThumbnail(url: track.thumbnailURL, size: 48)
-
+            HStack(spacing: DS.Spacing.md) {
+                TrackThumbnail(url: track.thumbnailURL, size: 56, cornerRadius: DS.Radius.sm)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(themeManager.textPrimary)
-                        .lineLimit(1)
+                        .font(DS.Typography.bodyEm)
+                        .foregroundColor(tokens.textPrimary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
                     Text(track.artist)
-                        .font(.caption2)
-                        .foregroundColor(themeManager.textSecondary)
+                        .font(DS.Typography.caption)
+                        .foregroundColor(tokens.textSecondary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(8)
-            .background(themeManager.surface)
-            .cornerRadius(10)
+            .padding(DS.Spacing.md)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                    .fill(tokens.surface)
+            )
         }
         .buttonStyle(.plain)
         .addToQueueGesture(playerManager: playerManager, track: track)
     }
 
-    private func smallTrackCard(_ track: Track) -> some View {
+    private func tileCard(_ track: Track) -> some View {
         Button {
+            Haptics.light()
             playerManager.play(track)
             recentlyPlayedManager.trackPlayed(track)
             selectedTab = .favorites
         } label: {
-            VStack(spacing: 6) {
-                TrackThumbnail(url: track.thumbnailURL, size: 64, cornerRadius: 6)
+            VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+                TrackThumbnail(url: track.thumbnailURL, size: nil, cornerRadius: DS.Radius.md)
+                    .aspectRatio(1, contentMode: .fit)
+                Text(track.title)
+                    .font(DS.Typography.captionStrong)
+                    .foregroundColor(tokens.textPrimary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Text(track.artist)
+                    .font(DS.Typography.micro)
+                    .foregroundColor(tokens.textSecondary)
+                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .buttonStyle(.plain)
         .addToQueueGesture(playerManager: playerManager, track: track)

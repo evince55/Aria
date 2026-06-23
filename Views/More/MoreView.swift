@@ -16,222 +16,297 @@ struct MoreView: View {
     @State private var showClearEQCacheAlert = false
 
     private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+    private var tokens: DesignTokens { themeManager.tokens }
 
     var body: some View {
         NavigationStack {
             ZStack {
-                themeManager.background.ignoresSafeArea()
+                tokens.background.ignoresSafeArea()
 
-                List {
-                    backupSection
-                    settingsSection
-                    advancedSection
-                    extrasSection
-                    versionFooter
+                ScrollView {
+                    VStack(spacing: DS.Spacing.xl) {
+                        heroHeader
+                        settingsSection
+                        advancedSection
+                        extrasSection
+                        versionFooter
+                    }
+                    .padding(.horizontal, DS.Spacing.lg)
+                    .padding(.top, DS.Spacing.lg)
+                    .padding(.bottom, 120)
                 }
-                .scrollContentBackground(.hidden)
             }
             .navigationTitle("More")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .alert("Clear Search History", isPresented: $showClearHistoryAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) {
+                Haptics.warning()
+                settingsManager.clearSearchHistory()
+            }
+        } message: {
+            Text("This will remove all your recent searches.")
+        }
+        .alert("Reinitialize Streaming", isPresented: $showResetStreamingAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Reset", role: .destructive) {
+                Haptics.warning()
+                settingsManager.resetStreaming()
+            }
+        } message: {
+            Text("This will reset all streaming settings to default.")
+        }
+        .alert("Clear Cache", isPresented: $showClearCacheAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) {
+                Haptics.warning()
+                URLCache.shared.removeAllCachedResponses()
+            }
+        } message: {
+            Text("This will clear all cached images and data.")
+        }
+        .alert("Clear EQ Audio Cache", isPresented: $showClearEQCacheAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) {
+                Haptics.warning()
+                playerManager.clearEQCache()
+            }
+        } message: {
+            Text("Deletes cached audio files used when EQ is enabled. Next EQ playback will re-download from the network.")
+        }
+        .alert("Clear All Favorites", isPresented: $showClearFavoritesAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear All", role: .destructive) {
+                Haptics.warning()
+                favoritesManager.removeAll()
+            }
+        } message: {
+            Text("This will permanently remove all your favorites. This action cannot be undone.")
+        }
+        .alert("Delete All Playlists", isPresented: $showDeletePlaylistsAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete All", role: .destructive) {
+                Haptics.warning()
+                playlistsManager.deleteAll()
+            }
+        } message: {
+            Text("This will permanently delete all playlists. This action cannot be undone.")
         }
     }
 
-    // MARK: - Backup
+    // MARK: - Hero
 
-    private var backupSection: some View {
-        Section {
-            Button {
-                // Placeholder
-            } label: {
-                Label("Backup Playlists", systemImage: "icloud.and.arrow.up")
-                    .foregroundColor(themeManager.textPrimary)
+    private var heroHeader: some View {
+        VStack(spacing: DS.Spacing.md) {
+            ZStack {
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [tokens.accent, tokens.accent.opacity(0.6)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 96, height: 96)
+                    .softShadow()
+                Image(systemName: "music.note")
+                    .font(.system(size: 40, weight: .light))
+                    .foregroundColor(.white)
             }
-            Button {
-                // Placeholder
-            } label: {
-                Label("Recovery", systemImage: "icloud.and.arrow.down")
-                    .foregroundColor(themeManager.textPrimary)
+
+            VStack(spacing: 4) {
+                Text("Aria")
+                    .font(DS.Typography.display)
+                    .foregroundColor(tokens.textPrimary)
+                Text("Music, your way")
+                    .font(DS.Typography.caption)
+                    .foregroundColor(tokens.textSecondary)
             }
-            Button {
-                // Placeholder
-            } label: {
-                Label("Transfer Playlists", systemImage: "arrow.left.arrow.right")
-                    .foregroundColor(themeManager.textPrimary)
-            }
-        } header: {
-            Text("Data")
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.Spacing.lg)
     }
 
     // MARK: - Settings
 
     private var settingsSection: some View {
-        Section {
-            HStack {
-                Label("Audio Quality", systemImage: "speaker.wave.2")
-                    .foregroundColor(themeManager.textPrimary)
-                Spacer()
-                Text("Best Available")
-                    .font(.body)
-                    .foregroundColor(themeManager.textSecondary)
-            }
+        MoreCard(title: "Settings", tokens: tokens) {
+            VStack(spacing: 0) {
+                row(icon: "speaker.wave.2", iconColor: tokens.accent, title: "Audio Quality") {
+                    Text(settingsManager.audioQuality.rawValue)
+                        .font(DS.Typography.body)
+                        .foregroundColor(tokens.textSecondary)
+                }
 
-            HStack {
-                Label("Default Start Page", systemImage: "house")
-                    .foregroundColor(themeManager.textPrimary)
-                Spacer()
-                Picker("", selection: $settingsManager.defaultStartTab) {
-                    ForEach(DefaultStartTab.allCases, id: \.self) { tab in
-                        Text(tab.rawValue).tag(tab)
+                Divider().background(tokens.hairline).padding(.leading, 56)
+
+                HStack(spacing: DS.Spacing.md) {
+                    iconBadge(systemName: "house", color: tokens.accent)
+                    Text("Default Start Page")
+                        .font(DS.Typography.body)
+                        .foregroundColor(tokens.textPrimary)
+                    Spacer()
+                    Picker("", selection: $settingsManager.defaultStartTab) {
+                        ForEach(DefaultStartTab.allCases, id: \.self) { tab in
+                            Text(tab.rawValue).tag(tab)
+                        }
+                    }
+                    .tint(tokens.accent)
+                    .onChange(of: settingsManager.defaultStartTab) { _ in
+                        Haptics.selection()
+                        settingsManager.save()
                     }
                 }
-                .onChange(of: settingsManager.defaultStartTab) { _ in
-                    settingsManager.save()
-                }
-            }
+                .padding(.horizontal, DS.Spacing.md)
+                .padding(.vertical, DS.Spacing.md)
 
-            Button {
-                showClearHistoryAlert = true
-            } label: {
-                Label("Clear Search History", systemImage: "magnifyingglass")
-                    .foregroundColor(themeManager.textPrimary)
-            }
-            .alert("Clear Search History", isPresented: $showClearHistoryAlert) {
-                Button("Cancel", role: .cancel) {}
-                Button("Clear", role: .destructive) {
-                    settingsManager.clearSearchHistory()
+                Divider().background(tokens.hairline).padding(.leading, 56)
+
+                Button {
+                    Haptics.warning()
+                    showClearHistoryAlert = true
+                } label: {
+                    row(icon: "magnifyingglass", iconColor: tokens.accent, title: "Clear Search History", isButton: true)
                 }
-            } message: {
-                Text("This will remove all your recent searches.")
+                .buttonStyle(.plain)
             }
-        } header: {
-            Text("Settings")
         }
     }
 
     // MARK: - Advanced
 
     private var advancedSection: some View {
-        Section {
-            Button {
-                showResetStreamingAlert = true
-            } label: {
-                Label("Reinitialize Streaming Settings", systemImage: "arrow.triangle.2.circlepath")
-                    .foregroundColor(themeManager.textPrimary)
-            }
-            .alert("Reinitialize Streaming", isPresented: $showResetStreamingAlert) {
-                Button("Cancel", role: .cancel) {}
-                Button("Reset", role: .destructive) {
-                    settingsManager.resetStreaming()
+        MoreCard(title: "Advanced", tokens: tokens) {
+            VStack(spacing: 0) {
+                Button {
+                    Haptics.warning()
+                    showResetStreamingAlert = true
+                } label: {
+                    row(icon: "arrow.triangle.2.circlepath", iconColor: .orange, title: "Reinitialize Streaming", isButton: true)
                 }
-            } message: {
-                Text("This will reset all streaming settings to default.")
-            }
+                .buttonStyle(.plain)
 
-            Button {
-                settingsManager.syncStreaming()
-            } label: {
-                Label("Sync Streaming Settings", systemImage: "arrow.triangle.2.circlepath.icloud")
-                    .foregroundColor(themeManager.textPrimary)
-            }
+                Divider().background(tokens.hairline).padding(.leading, 56)
 
-            Button {
-                showClearCacheAlert = true
-            } label: {
-                Label("Clear Image / Data Cache", systemImage: "trash.slash")
-                    .foregroundColor(themeManager.textPrimary)
-            }
-            .alert("Clear Cache", isPresented: $showClearCacheAlert) {
-                Button("Cancel", role: .cancel) {}
-                Button("Clear", role: .destructive) {
-                    URLCache.shared.removeAllCachedResponses()
+                Button {
+                    Haptics.light()
+                    settingsManager.syncStreaming()
+                } label: {
+                    row(icon: "arrow.triangle.2.circlepath.icloud", iconColor: tokens.accent, title: "Sync Streaming Settings", isButton: true)
                 }
-            } message: {
-                Text("This will clear all cached images and data.")
-            }
+                .buttonStyle(.plain)
 
-            Button(role: .destructive) {
-                showClearEQCacheAlert = true
-            } label: {
-                Label("Clear EQ Audio Cache", systemImage: "waveform.slash")
-            }
-            .alert("Clear EQ Audio Cache", isPresented: $showClearEQCacheAlert) {
-                Button("Cancel", role: .cancel) {}
-                Button("Clear", role: .destructive) {
-                    playerManager.clearEQCache()
-                }
-            } message: {
-                Text("Deletes cached audio files used when EQ is enabled. Next EQ playback will re-download from the network.")
-            }
+                Divider().background(tokens.hairline).padding(.leading, 56)
 
-            Button(role: .destructive) {
-                showClearFavoritesAlert = true
-            } label: {
-                Label("Clear All Favorites", systemImage: "heart.slash")
-            }
-            .alert("Clear All Favorites", isPresented: $showClearFavoritesAlert) {
-                Button("Cancel", role: .cancel) {}
-                Button("Clear All", role: .destructive) {
-                    favoritesManager.removeAll()
+                Button {
+                    Haptics.warning()
+                    showClearCacheAlert = true
+                } label: {
+                    row(icon: "trash.slash", iconColor: .orange, title: "Clear Image / Data Cache", isButton: true)
                 }
-            } message: {
-                Text("This will permanently remove all your favorites. This action cannot be undone.")
-            }
+                .buttonStyle(.plain)
 
-            Button(role: .destructive) {
-                showDeletePlaylistsAlert = true
-            } label: {
-                Label("Delete All Playlists", systemImage: "trash")
-            }
-            .alert("Delete All Playlists", isPresented: $showDeletePlaylistsAlert) {
-                Button("Cancel", role: .cancel) {}
-                Button("Delete All", role: .destructive) {
-                    playlistsManager.deleteAll()
+                Divider().background(tokens.hairline).padding(.leading, 56)
+
+                Button {
+                    Haptics.warning()
+                    showClearEQCacheAlert = true
+                } label: {
+                    row(icon: "waveform.slash", iconColor: .red, title: "Clear EQ Audio Cache", isButton: true)
                 }
-            } message: {
-                Text("This will permanently delete all playlists. This action cannot be undone.")
+                .buttonStyle(.plain)
+
+                Divider().background(tokens.hairline).padding(.leading, 56)
+
+                Button {
+                    Haptics.warning()
+                    showClearFavoritesAlert = true
+                } label: {
+                    row(icon: "heart.slash", iconColor: .red, title: "Clear All Favorites", isButton: true)
+                }
+                .buttonStyle(.plain)
+
+                Divider().background(tokens.hairline).padding(.leading, 56)
+
+                Button {
+                    Haptics.warning()
+                    showDeletePlaylistsAlert = true
+                } label: {
+                    row(icon: "trash", iconColor: .red, title: "Delete All Playlists", isButton: true)
+                }
+                .buttonStyle(.plain)
             }
-        } header: {
-            Text("Advanced")
         }
     }
 
     // MARK: - Extras
 
     private var extrasSection: some View {
-        Section {
-            HStack {
-                Label("Sleep Timer", systemImage: "moon.zzz")
-                    .foregroundColor(themeManager.textPrimary)
-                Spacer()
-                Picker("", selection: $settingsManager.sleepTimer) {
-                    ForEach(SleepTimerDuration.allCases, id: \.self) { duration in
-                        Text(duration.rawValue).tag(duration)
+        MoreCard(title: "Extras", tokens: tokens) {
+            VStack(spacing: 0) {
+                HStack(spacing: DS.Spacing.md) {
+                    iconBadge(systemName: "moon.zzz", color: tokens.accent)
+                    Text("Sleep Timer")
+                        .font(DS.Typography.body)
+                        .foregroundColor(tokens.textPrimary)
+                    Spacer()
+                    Picker("", selection: $settingsManager.sleepTimer) {
+                        ForEach(SleepTimerDuration.allCases, id: \.self) { duration in
+                            Text(duration.rawValue).tag(duration)
+                        }
+                    }
+                    .tint(tokens.accent)
+                    .onChange(of: settingsManager.sleepTimer) { _ in
+                        Haptics.selection()
+                        settingsManager.save()
                     }
                 }
-                .onChange(of: settingsManager.sleepTimer) { _ in
-                    settingsManager.save()
+                .padding(.horizontal, DS.Spacing.md)
+                .padding(.vertical, DS.Spacing.md)
+
+                Divider().background(tokens.hairline).padding(.leading, 56)
+
+                HStack(spacing: DS.Spacing.md) {
+                    iconBadge(systemName: "moon.circle", color: tokens.accent)
+                    Text("Dark Mode")
+                        .font(DS.Typography.body)
+                        .foregroundColor(tokens.textPrimary)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { themeManager.isDarkMode },
+                        set: { _ in
+                            Haptics.light()
+                            themeManager.toggleDarkMode()
+                        }
+                    ))
+                    .tint(tokens.accent)
+                }
+                .padding(.horizontal, DS.Spacing.md)
+                .padding(.vertical, DS.Spacing.md)
+
+                Divider().background(tokens.hairline).padding(.leading, 56)
+
+                NavigationLink {
+                    themePicker
+                } label: {
+                    HStack(spacing: DS.Spacing.md) {
+                        iconBadge(systemName: "paintpalette", color: tokens.accent)
+                        Text("Choose Theme")
+                            .font(DS.Typography.body)
+                            .foregroundColor(tokens.textPrimary)
+                        Spacer()
+                        Circle()
+                            .fill(tokens.accent)
+                            .frame(width: 18, height: 18)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(tokens.textSecondary)
+                    }
+                    .padding(.horizontal, DS.Spacing.md)
+                    .padding(.vertical, DS.Spacing.md)
                 }
             }
-
-            HStack {
-                Label("Dark Mode", systemImage: "moon.circle")
-                    .foregroundColor(themeManager.textPrimary)
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { themeManager.isDarkMode },
-                    set: { _ in themeManager.toggleDarkMode() }
-                ))
-                .tint(themeManager.theme.accentColor)
-            }
-
-            NavigationLink {
-                themePicker
-            } label: {
-                Label("Choose Theme", systemImage: "paintpalette")
-                    .foregroundColor(themeManager.textPrimary)
-            }
-        } header: {
-            Text("Extras")
         }
     }
 
@@ -239,45 +314,133 @@ struct MoreView: View {
 
     private var themePicker: some View {
         ZStack {
-            themeManager.background.ignoresSafeArea()
+            tokens.background.ignoresSafeArea()
 
-            List {
-                ForEach(AppTheme.allThemes) { theme in
-                    Button {
-                        themeManager.selectTheme(theme)
-                    } label: {
-                        HStack {
-                            Circle()
-                                .fill(theme.accentColor)
-                                .frame(width: 24, height: 24)
-                            Text(theme.name)
-                                .foregroundColor(themeManager.textPrimary)
-                            Spacer()
-                            if themeManager.theme.id == theme.id {
-                                Image(systemName: "checkmark")
-                                    .foregroundColor(themeManager.theme.accentColor)
-                            }
-                        }
+            ScrollView {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.md), count: 2),
+                    spacing: DS.Spacing.md
+                ) {
+                    ForEach(AppTheme.allThemes) { theme in
+                        themeCard(theme)
                     }
                 }
+                .padding(DS.Spacing.lg)
             }
-            .scrollContentBackground(.hidden)
         }
         .navigationTitle("Themes")
         .navigationBarTitleDisplayMode(.inline)
     }
 
+    private func themeCard(_ theme: AppTheme) -> some View {
+        let isActive = themeManager.theme.id == theme.id
+        return Button {
+            Haptics.medium()
+            themeManager.selectTheme(theme)
+        } label: {
+            VStack(spacing: DS.Spacing.md) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                        .fill(
+                            LinearGradient(
+                                colors: [theme.accentColor, theme.accentColor.opacity(0.5)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .aspectRatio(1, contentMode: .fit)
+                    if isActive {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 32, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                }
+                .softShadow()
+                Text(theme.name)
+                    .font(DS.Typography.bodyEm)
+                    .foregroundColor(tokens.textPrimary)
+            }
+            .padding(DS.Spacing.md)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                    .fill(tokens.cardSurface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                            .stroke(isActive ? theme.accentColor : Color.clear, lineWidth: 2)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     // MARK: - Version
 
     private var versionFooter: some View {
-        Section {
-            HStack {
-                Spacer()
-                Text("Aria v\(appVersion)")
-                    .font(.caption)
-                    .foregroundColor(themeManager.textSecondary)
-                Spacer()
+        VStack(spacing: 4) {
+            Text("Aria v\(appVersion)")
+                .font(DS.Typography.caption)
+                .foregroundColor(tokens.textSecondary)
+            Text("Made with ♥")
+                .font(DS.Typography.micro)
+                .foregroundColor(tokens.textSecondary.opacity(0.7))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DS.Spacing.lg)
+    }
+
+    // MARK: - Row helpers
+
+    @ViewBuilder
+    private func row(icon: String, iconColor: Color, title: String, isButton: Bool = false, trailing: () -> some View = { EmptyView() }) -> some View {
+        HStack(spacing: DS.Spacing.md) {
+            iconBadge(systemName: icon, color: iconColor)
+            Text(title)
+                .font(DS.Typography.body)
+                .foregroundColor(tokens.textPrimary)
+            Spacer()
+            trailing()
+            if isButton {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(tokens.textSecondary)
             }
+        }
+        .padding(.horizontal, DS.Spacing.md)
+        .padding(.vertical, DS.Spacing.md)
+        .contentShape(Rectangle())
+    }
+
+    private func iconBadge(systemName: String, color: Color) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous)
+                .fill(color.opacity(0.18))
+                .frame(width: 28, height: 28)
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(color)
+        }
+    }
+}
+
+/// Card wrapper used to group More-view sections with a consistent surface.
+private struct MoreCard<Content: View>: View {
+    let title: String
+    let tokens: DesignTokens
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+            SectionLabel(title: title, tokens: tokens)
+                .padding(.horizontal, DS.Spacing.sm)
+            content()
+                .background(
+                    RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                        .fill(tokens.cardSurface)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
+                        .stroke(tokens.hairline, lineWidth: 0.5)
+                )
         }
     }
 }

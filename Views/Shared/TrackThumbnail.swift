@@ -4,15 +4,15 @@ import SwiftUI
 /// same artwork URL is only downloaded once across the whole app.
 struct TrackThumbnail: View {
     let url: URL?
-    let size: CGFloat
+    var size: CGFloat? = nil
     var cornerRadius: CGFloat = 6
 
     var body: some View {
-        AsyncCachedImage(url: url) {
-            Rectangle().fill(Color.gray.opacity(0.2))
+        AsyncCachedImage(url: url, cornerRadius: cornerRadius) {
+            ShimmerView(cornerRadius: cornerRadius)
         }
         .frame(width: size, height: size)
-        .cornerRadius(cornerRadius)
-        .clipped()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
     }
 }

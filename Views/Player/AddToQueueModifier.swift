@@ -10,14 +10,13 @@ struct AddToQueueModifier: ViewModifier {
         content
             .contextMenu {
                 Button {
-                    let generator = UIImpactFeedbackGenerator(style: .medium)
-                    generator.impactOccurred()
+                    Haptics.medium()
                     playerManager.addToQueue(track)
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.65)) {
                         showConfirmation = true
                     }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                        withAnimation(.easeOut(duration: 0.2)) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+                        withAnimation(.easeOut(duration: 0.25)) {
                             showConfirmation = false
                         }
                     }
@@ -25,23 +24,35 @@ struct AddToQueueModifier: ViewModifier {
                     Label("Add to Queue", systemImage: "text.badge.plus")
                 }
             }
-            .overlay {
+            .overlay(alignment: .top) {
                 if showConfirmation {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.caption)
-                        Text("Added to Queue")
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(.ultraThinMaterial)
-                    .cornerRadius(20)
-                    .transition(.scale.combined(with: .opacity))
+                    confirmationToast
+                        .padding(.top, DS.Spacing.sm)
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
+    }
+
+    private var confirmationToast: some View {
+        HStack(spacing: DS.Spacing.sm) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(.green)
+            Text("Added to Queue")
+                .font(DS.Typography.captionStrong)
+                .foregroundColor(.primary)
+        }
+        .padding(.horizontal, DS.Spacing.md)
+        .padding(.vertical, DS.Spacing.sm)
+        .background(
+            Capsule()
+                .fill(.ultraThinMaterial)
+        )
+        .overlay(
+            Capsule()
+                .stroke(Color.white.opacity(0.10), lineWidth: 0.5)
+        )
+        .softShadow()
     }
 }
 

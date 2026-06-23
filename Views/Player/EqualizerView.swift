@@ -6,26 +6,32 @@ struct EqualizerView: View {
 
     @State private var localBands: [Float]
     @State private var syncWorkItem: DispatchWorkItem?
+    @State private var activePreset: EQPreset?
+
+    private var tokens: DesignTokens { themeManager.tokens }
 
     init(playerManager: PlayerManager, themeManager: ThemeManager) {
         self.playerManager = playerManager
         self.themeManager = themeManager
         _localBands = State(initialValue: playerManager.eqBands)
-        _syncWorkItem = State(initialValue: nil)
     }
 
     var body: some View {
         NavigationStack {
             ZStack {
-                themeManager.background.ignoresSafeArea()
+                tokens.background.ignoresSafeArea()
 
-                VStack(spacing: 0) {
+                VStack(spacing: DS.Spacing.lg) {
+                    EQCurveView(bands: localBands, accent: tokens.accent, height: 80)
+                        .padding(.horizontal, DS.Spacing.lg)
+                        .padding(.top, DS.Spacing.sm)
+
                     presetsBar
                     eqGrid
                     Spacer()
                     resetButton
-                        .padding(.bottom, 24)
                 }
+                .padding(.bottom, DS.Spacing.xl)
             }
             .navigationTitle("Equalizer")
             .navigationBarTitleDisplayMode(.inline)
@@ -34,6 +40,7 @@ struct EqualizerView: View {
             localBands = playerManager.eqBands
             syncWorkItem?.cancel()
             syncWorkItem = nil
+            activePreset = nil
         }
         .onDisappear {
             cancelPendingSync()
@@ -45,88 +52,113 @@ struct EqualizerView: View {
 
     private var presetsBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            HStack(spacing: DS.Spacing.sm) {
                 ForEach(EQPreset.allCases) { preset in
                     Button {
+                        Haptics.light()
                         applyPreset(preset)
                     } label: {
+                        let isActive = activePreset == preset
                         Text(preset.rawValue)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(themeManager.dividerColor)
-                            .cornerRadius(16)
-                            .foregroundColor(themeManager.textPrimary)
+                            .font(DS.Typography.captionStrong)
+                            .foregroundColor(isActive ? .white : tokens.textPrimary)
+                            .padding(.horizontal, DS.Spacing.md)
+                            .padding(.vertical, DS.Spacing.sm)
+                            .background(
+                                Capsule()
+                                    .fill(isActive
+                                          ? AnyShapeStyle(LinearGradient(colors: [tokens.accent, tokens.accent.opacity(0.85)], startPoint: .leading, endPoint: .trailing))
+                                          : AnyShapeStyle(tokens.surface))
+                            )
+                            .overlay(
+                                Capsule()
+                                    .stroke(isActive ? Color.clear : tokens.hairline, lineWidth: 0.5)
+                            )
                     }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, DS.Spacing.lg)
         }
     }
 
     private var eqGrid: some View {
-        HStack(alignment: .bottom, spacing: 0) {
+        HStack(alignment: .center, spacing: 0) {
             ForEach(0..<10, id: \.self) { i in
-                VStack(spacing: 8) {
-                    Text(String(format: "%.0f", localBands[i]))
-                        .font(.caption2)
-                        .foregroundColor(themeManager.textSecondary)
-                        .frame(height: 12)
+                VStack(spacing: DS.Spacing.sm) {
+                    Text(String(format: "%+0.0f", localBands[i]))
+                        .font(DS.Typography.mono)
+                        .foregroundColor(tokens.textSecondary)
+                        .frame(height: 14)
 
-                    Slider(value: Binding<Double>(
-                        get: { Double(localBands[i]) },
-                        set: { newValue in
-                            localBands[i] = Float(newValue)
-                            scheduleDebouncedSync()
-                        }
-                    ), in: -12...12, step: 0.5)
-                    .tint(themeManager.theme.accentColor)
+                    ThinSlider(
+                        value: Binding<Double>(
+                            get: { Double(localBands[i]) },
+                            set: { newValue in
+                                localBands[i] = Float(newValue)
+                                activePreset = nil
+                                scheduleDebouncedSync()
+                            }
+                        ),
+                        in: -12...12,
+                        step: 0.5,
+                        accent: tokens.accent,
+                        trackHeight: 4,
+                        thumbDiameter: 12
+                    )
                     .rotationEffect(.degrees(-90))
-                    .frame(height: 140)
-                    .padding(.horizontal, 2)
+                    .frame(width: 140, height: 24)
 
                     Text(frequencyLabel(i))
-                        .font(.system(size: 9))
-                        .foregroundColor(themeManager.textSecondary)
-                        .frame(height: 12)
+                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .foregroundColor(tokens.textSecondary)
+                        .frame(height: 14)
                 }
                 .frame(maxWidth: .infinity)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 16)
-        .frame(height: 240)
+        .padding(.horizontal, DS.Spacing.md)
+        .frame(height: 200)
     }
 
     private var resetButton: some View {
         Button {
+            Haptics.warning()
             cancelPendingSync()
             localBands = Array(repeating: 0, count: 10)
+            activePreset = .flat
             playerManager.resetEQ()
         } label: {
-            Text("Reset")
-                .font(.body)
-                .fontWeight(.semibold)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(themeManager.dividerColor)
-                .cornerRadius(12)
-                .foregroundColor(themeManager.textPrimary)
+            HStack(spacing: DS.Spacing.sm) {
+                Image(systemName: "arrow.counterclockwise")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Reset to Flat")
+                    .font(DS.Typography.bodyEm)
+            }
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, DS.Spacing.md)
+            .background(
+                Capsule()
+                    .fill(tokens.accent)
+            )
         }
-        .padding(.horizontal, 24)
+        .buttonStyle(.plain)
+        .padding(.horizontal, DS.Spacing.xl)
     }
 
     private func frequencyLabel(_ index: Int) -> String {
         let freq = PlayerManager.eqFrequencies[index]
-        if freq >= 1000 { return String(format: "%.0fk", freq / 1000) }
-        return String(format: "%.0f", freq)
+        if freq >= 1000 { return String(format: "%dk", Int(freq / 1000)) }
+        return String(format: "%d", Int(freq))
     }
 
     private func applyPreset(_ preset: EQPreset) {
         cancelPendingSync()
-        localBands = preset.gains
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            localBands = preset.gains
+            activePreset = preset
+        }
         playerManager.applyEQPreset(preset.gains)
     }
 
