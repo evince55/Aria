@@ -6,8 +6,6 @@ struct Track: Identifiable, Codable, Hashable {
     let artist: String
     let thumbnailURL: URL?
 
-    var displayTitle: String { title }
-
     var firstLetter: String {
         let normalized = title
             .trimmingCharacters(in: .whitespacesAndNewlines)

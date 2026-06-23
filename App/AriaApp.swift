@@ -1,5 +1,8 @@
 import AVFoundation
 import SwiftUI
+import os.log
+
+private let log = Logger(subsystem: "com.aria.music", category: "AriaApp")
 
 @main
 struct AriaApp: App {
@@ -9,7 +12,7 @@ struct AriaApp: App {
                 .playback, mode: .default, options: [.mixWithOthers]
             )
         } catch {
-            print("AriaApp: failed to set audio session category: \(error)")
+            log.error("Failed to set audio session category: \(error.localizedDescription, privacy: .public)")
         }
     }
 

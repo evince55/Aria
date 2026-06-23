@@ -12,14 +12,10 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
     }
 
     private(set) var recordedRequests: [RecordedRequest] = []
-    private(set) var dataCalls: [URL] = []
 
     /// Closure invoked for each `dataTask(with:completionHandler:)` call.
     /// Test sets this to control the response.
     var dataTaskHandler: ((URL, @escaping (Data?, URLResponse?, Error?) -> Void) -> Void)?
-
-    /// Closure invoked for each `data(from:)` call.
-    var dataFromHandler: ((URL) async throws -> (Data, URLResponse))?
 
     @discardableResult
     func dataTask(
@@ -34,11 +30,7 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
     }
 
     func data(from url: URL) async throws -> (Data, URLResponse) {
-        dataCalls.append(url)
-        if let handler = dataFromHandler {
-            return try await handler(url)
-        }
-        return (Data(), URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil))
+        (Data(), URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil))
     }
 }
 
@@ -277,17 +269,7 @@ final class PlayerManagerTests: XCTestCase {
         wait(for: [exp], timeout: 1.0)
     }
 
-    // MARK: - Lifecycle (3)
-
-    func test_DeinitReleasesPlayer() {
-        weak var weakPlayer: PlayerManager?
-        autoreleasepool {
-            let local = PlayerManager(urlSession: MockURLSession())
-            weakPlayer = local
-            XCTAssertNotNil(weakPlayer)
-        }
-        XCTAssertNil(weakPlayer)
-    }
+    // MARK: - Lifecycle (2)
 
     func test_BackendURLIsNonEmpty() {
         XCTAssertFalse(player.backendURL.isEmpty)

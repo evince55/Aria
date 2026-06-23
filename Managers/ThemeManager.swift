@@ -36,7 +36,6 @@ import Combine
 
     var background: Color { tokens.background }
     var surface: Color { tokens.surface }
-    var elevatedSurface: Color { tokens.elevatedSurface }
     var textPrimary: Color { tokens.textPrimary }
     var textSecondary: Color { tokens.textSecondary }
     var dividerColor: Color { tokens.dividerColor }
@@ -53,10 +52,6 @@ struct DesignTokens {
 
     var surface: Color {
         isDark ? Color(white: 0.10) : Color(white: 0.96)
-    }
-
-    var elevatedSurface: Color {
-        isDark ? Color(white: 0.14) : Color.white
     }
 
     /// Slightly tinted surface used for "card" backgrounds.
@@ -78,11 +73,6 @@ struct DesignTokens {
 
     var hairline: Color {
         isDark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
-    }
-
-    /// For the big circular play button background.
-    var playButtonBackground: Color {
-        isDark ? Color.white.opacity(0.10) : Color.black.opacity(0.06)
     }
 
     /// Soft accent wash for active rows / pills.

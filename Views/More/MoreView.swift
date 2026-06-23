@@ -11,7 +11,6 @@ struct MoreView: View {
     @State private var showClearFavoritesAlert = false
     @State private var showDeletePlaylistsAlert = false
     @State private var showClearCacheAlert = false
-    @State private var showResetStreamingAlert = false
     @State private var showClearHistoryAlert = false
     @State private var showClearEQCacheAlert = false
 
@@ -47,15 +46,6 @@ struct MoreView: View {
             }
         } message: {
             Text("This will remove all your recent searches.")
-        }
-        .alert("Reinitialize Streaming", isPresented: $showResetStreamingAlert) {
-            Button("Cancel", role: .cancel) {}
-            Button("Reset", role: .destructive) {
-                Haptics.warning()
-                settingsManager.resetStreaming()
-            }
-        } message: {
-            Text("This will reset all streaming settings to default.")
         }
         .alert("Clear Cache", isPresented: $showClearCacheAlert) {
             Button("Cancel", role: .cancel) {}
@@ -133,14 +123,6 @@ struct MoreView: View {
     private var settingsSection: some View {
         MoreCard(title: "Settings", tokens: tokens) {
             VStack(spacing: 0) {
-                row(icon: "speaker.wave.2", iconColor: tokens.accent, title: "Audio Quality") {
-                    Text(settingsManager.audioQuality.rawValue)
-                        .font(DS.Typography.body)
-                        .foregroundColor(tokens.textSecondary)
-                }
-
-                Divider().background(tokens.hairline).padding(.leading, 56)
-
                 HStack(spacing: DS.Spacing.md) {
                     iconBadge(systemName: "house", color: tokens.accent)
                     Text("Default Start Page")
@@ -179,26 +161,6 @@ struct MoreView: View {
     private var advancedSection: some View {
         MoreCard(title: "Advanced", tokens: tokens) {
             VStack(spacing: 0) {
-                Button {
-                    Haptics.warning()
-                    showResetStreamingAlert = true
-                } label: {
-                    row(icon: "arrow.triangle.2.circlepath", iconColor: .orange, title: "Reinitialize Streaming", isButton: true)
-                }
-                .buttonStyle(.plain)
-
-                Divider().background(tokens.hairline).padding(.leading, 56)
-
-                Button {
-                    Haptics.light()
-                    settingsManager.syncStreaming()
-                } label: {
-                    row(icon: "arrow.triangle.2.circlepath.icloud", iconColor: tokens.accent, title: "Sync Streaming Settings", isButton: true)
-                }
-                .buttonStyle(.plain)
-
-                Divider().background(tokens.hairline).padding(.leading, 56)
-
                 Button {
                     Haptics.warning()
                     showClearCacheAlert = true

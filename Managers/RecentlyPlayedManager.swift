@@ -50,16 +50,6 @@ final class RecentlyPlayedManager: ObservableObject {
         saveAdded()
     }
 
-    func clearPlayed() {
-        recentlyPlayed.removeAll()
-        savePlayed()
-    }
-
-    func clearAdded() {
-        recentlyAdded.removeAll()
-        saveAdded()
-    }
-
     private func savePlayed() {
         playedDebouncer.call()
     }

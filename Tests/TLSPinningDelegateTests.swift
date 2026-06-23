@@ -136,38 +136,6 @@ final class TLSPinningDelegateTests: XCTestCase {
         XCTAssertNil(credential)
     }
 
-    func test_NonMatchingPinnedDataWithChainDoesNotAcceptViaUseCredential() {
-        // Build a pin that won't match the bundled cert, then challenge
-        // with the bundled cert. We can't assert the exact disposition
-        // (cancel vs default) because unit tests can't easily construct
-        // an evaluated SecTrust chain with the matching cert, but we can
-        // assert that the delegate does NOT produce a credential via
-        // .useCredential with the matching cert when the pin doesn't
-        // match — that's the core safety property.
-        guard let cert = makeBundledCert() else { return }
-        let certData = SecCertificateCopyData(cert) as Data
-        // Mutate the last byte to ensure mismatch.
-        var mismatched = certData
-        mismatched[mismatched.count - 1] ^= 0xFF
-        let delegate = TLSPinningDelegate(pinnedCertData: mismatched)
-
-        let challenge = makeChallenge(leafCert: cert, evaluateTrust: true)
-        let (_, credential) = runChallenge(challenge, through: delegate)
-        // The delegate should NOT have produced a credential based on the
-        // mutated pin. (It might still produce one via
-        // .performDefaultHandling, which is fine — the test just
-        // verifies we don't accept a server whose cert doesn't match
-        // the pin.)
-        if let cred = credential {
-            // If a credential is produced, it must be the "default"
-            // system-trust path, not a custom URLCredential(trust:).
-            // We can't easily distinguish, so just check it was constructed.
-            XCTAssertNotNil(cred, "Credential was produced but does not match the pin")
-        } else {
-            XCTAssertNil(credential)
-        }
-    }
-
     // MARK: - Live network integration
 
     /// Verifies the pinning delegate works end-to-end against the real

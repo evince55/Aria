@@ -88,7 +88,7 @@ final class NowPlayingService {
         Task(priority: .userInitiated) {
             let s = AVAudioSession.sharedInstance()
             do {
-                try s.setCategory(.playback, mode: .default, options: [])
+                try s.setCategory(.playback, mode: .default, options: [.mixWithOthers])
                 try s.setActive(true)
             } catch {
                 log.error("Audio session activation failed: \(error.localizedDescription, privacy: .public)")

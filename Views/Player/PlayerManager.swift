@@ -2,7 +2,6 @@ import Foundation
 import MediaPlayer
 import Combine
 import AVFoundation
-import CryptoKit
 import os.log
 
 private let log = Logger(subsystem: "com.aria.music", category: "PlayerManager")
@@ -65,7 +64,6 @@ final class PlayerManager: NSObject, ObservableObject {
     private var engine: AVAudioEngine?
     private var engineNode: AVAudioPlayerNode?
     private var eqUnit: AVAudioUnitEQ?
-    private var enginePlaybackStarted = false
     private var scheduleGeneration: Int = 0
 
     // MARK: - Playback control
@@ -176,6 +174,25 @@ final class PlayerManager: NSObject, ObservableObject {
     }
 
     // MARK: - Playback
+
+    /// Dev-only helper: injects a fake current track without going through
+    /// the network so the full-screen player layout can be visually verified
+    /// in the simulator. Triggered from `ContentView` via the
+    /// `--debug-fake-track` launch argument or the `debug_fake_track`
+    /// UserDefault key. Not used in Release builds.
+    func loadDebugFakeTrack() {
+        let track = Track(
+            id: "debug-track-1",
+            title: "Bohemian Rhapsody",
+            artist: "Queen",
+            thumbnailURL: URL(string: "https://i.ytimg.com/vi/fJ9rUzIMcZQ/maxresdefault.jpg")
+        )
+        currentTrack = track
+        isPlaying = true
+        playbackState = .playing
+        currentTime = 132
+        duration = 354
+    }
 
     func play(_ track: Track) {
         playGeneration += 1
@@ -304,8 +321,13 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
+    /// TODO: Currently a no-op distinction — both branches restart the current
+    /// track. Replace with a real previous-track implementation that consults
+    /// a track history (i.e. the order tracks were played, not the queue).
+    /// For now the behaviour is "tap to restart the current track", which
+    /// matches what most lock-screen / control-center users expect.
     func previousTrack() {
-        if currentTime > 3 { seek(to: 0) } else { seek(to: 0) }
+        seek(to: 0)
     }
 
     // MARK: - Queue
@@ -551,7 +573,6 @@ final class PlayerManager: NSObject, ObservableObject {
 
         scheduleGeneration += 1
         let gen = scheduleGeneration
-        enginePlaybackStarted = false
 
         let scheduleQueue = DispatchQueue(label: "eq.schedule")
 
@@ -575,7 +596,6 @@ final class PlayerManager: NSObject, ObservableObject {
                         guard gen == self.scheduleGeneration, self.isUsingEngine else { return }
                         self.engineNode?.scheduleBuffer(pcmBuffer, completionHandler: nil)
                         self.engineNode?.play()
-                        self.enginePlaybackStarted = true
                         self.isPlaying = true
                         self.playbackState = .playing
                         self.startTimeDisplayLink()
@@ -688,7 +708,6 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private func seekEngine(to time: TimeInterval) {
         engineNode?.stop()
-        enginePlaybackStarted = false
         scheduleGeneration += 1
 
         seekTarget = time
@@ -766,7 +785,6 @@ final class PlayerManager: NSObject, ObservableObject {
         engine = nil
         engineNode = nil
         eqUnit = nil
-        enginePlaybackStarted = false
     }
 
     private func stopAllPlayback() {
