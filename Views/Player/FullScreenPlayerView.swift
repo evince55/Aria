@@ -21,6 +21,8 @@ struct FullScreenPlayerView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let isPortrait = geometry.size.height >= geometry.size.width
+
             ZStack {
                 ArtworkBackdrop(
                     artworkURL: playerManager.currentTrack?.thumbnailURL,
@@ -34,22 +36,16 @@ struct FullScreenPlayerView: View {
                         .padding(.bottom, DS.Spacing.lg)
 
                     if let track = playerManager.currentTrack {
-                        ScrollView {
-                            VStack(spacing: 0) {
-                                artworkSection(track: track, size: geometry.size)
-                                trackInfoSection(track: track)
-                                seekBarSection
-                                transportControls
-                                secondaryControls(track: track)
-                            }
-                            .padding(.bottom, DS.Spacing.lg)
+                        if isPortrait {
+                            portraitLayout(track: track, size: geometry.size)
+                        } else {
+                            landscapeLayout(track: track, size: geometry.size)
                         }
-                        .scrollIndicators(.hidden)
                     } else {
                         emptyState
                     }
                 }
-                .padding(.horizontal, DS.Spacing.xl)
+                .padding(.horizontal, isPortrait ? DS.Spacing.xl : DS.Spacing.lg)
             }
             .offset(y: dragOffset)
             .scaleEffect(scaleForDrag)
@@ -80,6 +76,57 @@ struct FullScreenPlayerView: View {
         .sheet(isPresented: $showQueue) {
             QueueView(playerManager: playerManager, themeManager: themeManager)
         }
+    }
+
+    // MARK: - Layouts
+
+    private func portraitLayout(track: Track, size: CGSize) -> some View {
+        VStack(spacing: 0) {
+            artworkView(track: track, side: artworkSideForPortrait(size: size))
+                .padding(.bottom, DS.Spacing.lg)
+
+            trackInfoSection(track: track)
+
+            Spacer(minLength: DS.Spacing.sm)
+
+            seekBarSection
+            transportControls
+            secondaryControls(track: track)
+        }
+    }
+
+    private func landscapeLayout(track: Track, size: CGSize) -> some View {
+        HStack(alignment: .center, spacing: DS.Spacing.lg) {
+            artworkView(track: track, side: artworkSideForLandscape(size: size))
+
+            VStack(spacing: 0) {
+                trackInfoSection(track: track)
+                Spacer(minLength: DS.Spacing.sm)
+                seekBarSection
+                transportControls
+                secondaryControls(track: track)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // MARK: - Artwork sizing
+
+    private func artworkSideForPortrait(size: CGSize) -> CGFloat {
+        // Cap by the screen width (with some padding) and by ~50% of the
+        // available height so the artwork dominates without crowding the
+        // controls at the bottom.
+        let byWidth = min(size.width, 420) - DS.Spacing.xl * 2
+        let byHeight = size.height * 0.46
+        return max(180, min(byWidth, byHeight, 380))
+    }
+
+    private func artworkSideForLandscape(size: CGSize) -> CGFloat {
+        // In landscape, the artwork is a square sized primarily by the
+        // screen height so it never overflows vertically.
+        let byHeight = size.height * 0.78
+        let byWidth = size.width * 0.42
+        return max(160, min(byHeight, byWidth, 360))
     }
 
     // MARK: - Drag math
@@ -159,11 +206,8 @@ struct FullScreenPlayerView: View {
 
     // MARK: - Artwork
 
-    private func artworkSection(track: Track, size: CGSize) -> some View {
-        let maxWidth = min(size.width * 0.85, 380)
-        let maxHeight = min(maxWidth, size.height * 0.34)
-
-        return Group {
+    private func artworkView(track: Track, side: CGFloat) -> some View {
+        Group {
             if let url = track.thumbnailURL {
                 AsyncCachedImage(url: url, cornerRadius: DS.Radius.lg) {
                     ShimmerView(cornerRadius: DS.Radius.lg)
@@ -178,15 +222,13 @@ struct FullScreenPlayerView: View {
                     )
             }
         }
-        .frame(maxWidth: maxWidth, maxHeight: maxHeight)
-        .aspectRatio(1, contentMode: .fit)
+        .frame(width: side, height: side)
         .overlay(
             RoundedRectangle(cornerRadius: DS.Radius.lg, style: .continuous)
                 .stroke(Color.white.opacity(0.08), lineWidth: 0.7)
         )
         .cardShadow()
         .matchedGeometryEffect(id: "playerArtwork", in: namespace)
-        .padding(.bottom, DS.Spacing.lg)
     }
 
     // MARK: - Track Info
