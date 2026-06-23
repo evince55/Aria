@@ -1,29 +1,19 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var playerManager = PlayerManager()
-    @StateObject private var favoritesManager = FavoritesManager()
-    @StateObject private var playlistsManager = PlaylistsManager()
-    @StateObject private var recentlyPlayedManager = RecentlyPlayedManager()
-    @StateObject private var settingsManager: SettingsManager
-    @StateObject private var themeManager: ThemeManager
+    @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var favoritesManager: FavoritesManager
+    @EnvironmentObject private var playlistsManager: PlaylistsManager
+    @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
+    @EnvironmentObject private var settingsManager: SettingsManager
+    @EnvironmentObject private var themeManager: ThemeManager
 
-    @State private var selectedTab: AppTab = .favorites
+    @State private var selectedTab: AppTab
     @State private var showFullPlayer = false
     @Environment(\.scenePhase) private var scenePhase
 
-    init() {
-        let settings = SettingsManager()
-        _settingsManager = StateObject(wrappedValue: settings)
-        _themeManager = StateObject(wrappedValue: ThemeManager(settings: settings))
-
-        let tabRaw = settings.defaultStartTab.rawValue
-        switch tabRaw {
-        case "Playlists": _selectedTab = State(initialValue: .playlists)
-        case "Search":    _selectedTab = State(initialValue: .search)
-        case "More":      _selectedTab = State(initialValue: .more)
-        default:          _selectedTab = State(initialValue: .favorites)
-        }
+    init(initialTab: AppTab = .favorites) {
+        _selectedTab = State(initialValue: initialTab)
     }
 
     var body: some View {

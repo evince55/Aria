@@ -1,12 +1,12 @@
 import SwiftUI
 
 struct MoreView: View {
-    @ObservedObject var playerManager: PlayerManager
-    @ObservedObject var settingsManager: SettingsManager
-    @ObservedObject var favoritesManager: FavoritesManager
-    @ObservedObject var playlistsManager: PlaylistsManager
-    @ObservedObject var recentlyPlayedManager: RecentlyPlayedManager
-    @ObservedObject var themeManager: ThemeManager
+    @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var settingsManager: SettingsManager
+    @EnvironmentObject private var favoritesManager: FavoritesManager
+    @EnvironmentObject private var playlistsManager: PlaylistsManager
+    @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
+    @EnvironmentObject private var themeManager: ThemeManager
 
     @State private var showClearFavoritesAlert = false
     @State private var showDeletePlaylistsAlert = false

@@ -35,7 +35,7 @@ final class PlayerManager: NSObject, ObservableObject {
 
     // MARK: - Configuration
 
-    let backendURL: String = {
+    static let backendURL: String = {
         if let url = Bundle.main.object(forInfoDictionaryKey: "ARIA_BACKEND_URL") as? String {
             return url
         }
@@ -369,7 +369,7 @@ final class PlayerManager: NSObject, ObservableObject {
     // MARK: - Network
 
     private func fetchStreamURL(for videoID: String, generation: Int) {
-        guard let url = URL(string: "\(backendURL)/api/play?video_id=\(videoID)") else { return }
+        guard let url = URL(string: "\(Self.backendURL)/api/play?video_id=\(videoID)") else { return }
 
         urlSession.dataTask(with: url) { [weak self] data, _, error in
             guard let self else { return }
@@ -386,7 +386,7 @@ final class PlayerManager: NSObject, ObservableObject {
                 return
             }
 
-            let base = self.backendURL
+            let base = Self.backendURL
             guard let streamURL = URL(string: streamURLString, relativeTo: URL(string: base))?.absoluteURL else {
                 DispatchQueue.main.async { self.handleFetchError() }
                 return

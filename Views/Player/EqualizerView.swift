@@ -1,18 +1,11 @@
 import SwiftUI
 
 struct EqualizerView: View {
-    @ObservedObject var playerManager: PlayerManager
-    @ObservedObject var themeManager: ThemeManager
+    @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var themeManager: ThemeManager
 
-    @State private var localBands: [Float]
+    @State private var localBands: [Float] = Array(repeating: 0, count: 10)
     @State private var syncWorkItem: DispatchWorkItem?
-
-    init(playerManager: PlayerManager, themeManager: ThemeManager) {
-        self.playerManager = playerManager
-        self.themeManager = themeManager
-        _localBands = State(initialValue: playerManager.eqBands)
-        _syncWorkItem = State(initialValue: nil)
-    }
 
     var body: some View {
         NavigationStack {

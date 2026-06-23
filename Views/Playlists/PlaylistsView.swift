@@ -1,11 +1,11 @@
 import SwiftUI
 
 struct PlaylistsView: View {
-    @ObservedObject var playerManager: PlayerManager
-    @ObservedObject var playlistsManager: PlaylistsManager
-    @ObservedObject var recentlyPlayedManager: RecentlyPlayedManager
-    @ObservedObject var favoritesManager: FavoritesManager
-    @ObservedObject var themeManager: ThemeManager
+    @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var playlistsManager: PlaylistsManager
+    @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
+    @EnvironmentObject private var favoritesManager: FavoritesManager
+    @EnvironmentObject private var themeManager: ThemeManager
 
     @State private var selectedTab: PlaylistTab = .recentlyAdded
     @State private var showNewPlaylistAlert = false

@@ -272,7 +272,7 @@ final class PlayerManagerTests: XCTestCase {
     // MARK: - Lifecycle (2)
 
     func test_BackendURLIsNonEmpty() {
-        XCTAssertFalse(player.backendURL.isEmpty)
+        XCTAssertFalse(PlayerManager.backendURL.isEmpty)
     }
 
     func test_PlaybackStateIdleAtInit() {

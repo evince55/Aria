@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct PlaylistDetailView: View {
-    @ObservedObject var playerManager: PlayerManager
-    @ObservedObject var playlistsManager: PlaylistsManager
-    @ObservedObject var recentlyPlayedManager: RecentlyPlayedManager
-    @ObservedObject var themeManager: ThemeManager
+    @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var playlistsManager: PlaylistsManager
+    @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
+    @EnvironmentObject private var themeManager: ThemeManager
 
     let playlist: Playlist
 

@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct QueueView: View {
-    @ObservedObject var playerManager: PlayerManager
-    @ObservedObject var themeManager: ThemeManager
+    @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var themeManager: ThemeManager
     @Environment(\.dismiss) private var dismiss
 
     private var tokens: DesignTokens { themeManager.tokens }

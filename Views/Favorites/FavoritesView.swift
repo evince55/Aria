@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct FavoritesView: View {
-    @ObservedObject var playerManager: PlayerManager
-    @ObservedObject var favoritesManager: FavoritesManager
-    @ObservedObject var recentlyPlayedManager: RecentlyPlayedManager
-    @ObservedObject var themeManager: ThemeManager
+    @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var favoritesManager: FavoritesManager
+    @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
+    @EnvironmentObject private var themeManager: ThemeManager
 
     private var tokens: DesignTokens { themeManager.tokens }
 

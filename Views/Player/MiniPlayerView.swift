@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct MiniPlayerView: View {
-    @ObservedObject var playerManager: PlayerManager
+    @EnvironmentObject private var playerManager: PlayerManager
     var onTap: () -> Void
 
     var body: some View {

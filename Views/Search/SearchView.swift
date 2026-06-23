@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct SearchView: View {
-    @ObservedObject var playerManager: PlayerManager
-    @ObservedObject var recentlyPlayedManager: RecentlyPlayedManager
-    @ObservedObject var themeManager: ThemeManager
-    @ObservedObject var settingsManager: SettingsManager
+    @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
+    @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var settingsManager: SettingsManager
     @Binding var selectedTab: AppTab
 
     @State private var query = ""
