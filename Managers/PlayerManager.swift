@@ -231,7 +231,7 @@ final class PlayerManager: NSObject, ObservableObject {
                 engineNode?.play()
             } else {
                 if playbackState == .ended { avPlayerPath.replayCurrent() }
-                avPlayerPath.avPlayer?.play()
+                avPlayerPath.play()
             }
             isPlaying = true
             playbackState = .playing
@@ -315,7 +315,7 @@ final class PlayerManager: NSObject, ObservableObject {
             playNextInQueue()
         } else {
             seek(to: 0)
-            if isUsingEngine { engineNode?.stop() } else { avPlayerPath.avPlayer?.pause() }
+            if isUsingEngine { engineNode?.stop() } else { avPlayerPath.pause() }
             isPlaying = false
             playbackState = .ended
         }

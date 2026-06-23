@@ -112,6 +112,10 @@ final class AVPlayerPath {
         avPlayer?.seek(to: cmTime)
     }
 
+    func play() {
+        avPlayer?.play()
+    }
+
     func pause() {
         avPlayer?.pause()
     }
