@@ -8,22 +8,14 @@ struct SearchView: View {
     @Binding var selectedTab: AppTab
 
     @State private var query = ""
-    @State private var results: [Track] = []
-    @State private var isSearching = false
-    @State private var errorMessage: String?
-    @State private var searchTask: Task<Void, Never>?
-    @State private var hasSearched = false
+    @State private var results: Loadable<[Track]> = .idle
 
     private let searchService: YouTubeSearchService
     private var tokens: DesignTokens { themeManager.tokens }
 
-    init(playerManager: PlayerManager, recentlyPlayedManager: RecentlyPlayedManager, themeManager: ThemeManager, settingsManager: SettingsManager, selectedTab: Binding<AppTab>) {
-        self.playerManager = playerManager
-        self.recentlyPlayedManager = recentlyPlayedManager
-        self.themeManager = themeManager
-        self.settingsManager = settingsManager
+    init(selectedTab: Binding<AppTab>) {
         self._selectedTab = selectedTab
-        self.searchService = YouTubeSearchService(backendURL: playerManager.backendURL)
+        self.searchService = YouTubeSearchService(backendURL: PlayerManager.backendURL)
     }
 
     var body: some View {
@@ -31,41 +23,36 @@ struct SearchView: View {
             ZStack {
                 tokens.background.ignoresSafeArea()
 
-                if hasSearched || !query.isEmpty {
-                    searchResultsList
-                } else {
-                    browseContent
-                }
+                content
             }
             .navigationTitle("Search")
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: "Songs, artists, videos")
-            .onChange(of: query) { newQuery in
-                errorMessage = nil
-                searchTask?.cancel()
-                searchService.cancel()
-
-                let trimmed = newQuery.trimmingCharacters(in: .whitespaces)
-                guard trimmed.count >= 3 else {
-                    results = []
-                    hasSearched = false
-                    errorMessage = nil
-                    return
-                }
-
-                hasSearched = true
-                searchTask = Task {
-                    try? await Task.sleep(nanoseconds: 600_000_000)
-                    await performSearch(query: trimmed)
-                }
+            .task(id: query) {
+                await runSearch(for: query)
             }
-            .overlay {
-                if isSearching && results.isEmpty {
-                    ProgressView()
-                        .tint(tokens.accent)
-                        .scaleEffect(1.1)
-                }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch results {
+        case .idle:
+            browseContent
+        case .loading:
+            if let cached = results.value, !cached.isEmpty {
+                resultsList(cached)
+            } else {
+                browseContent
             }
+        case .loaded(let tracks):
+            resultsList(tracks)
+        case .failed(let error):
+            resultsList([])
+                .overlay(alignment: .top) {
+                    errorPill(error.localizedDescription)
+                        .padding(DS.Spacing.lg)
+                }
         }
     }
 
@@ -135,8 +122,7 @@ struct SearchView: View {
                 Spacer()
                 Button {
                     Haptics.light()
-                    settingsManager.searchHistory.removeAll { $0 == item }
-                    settingsManager.save()
+                    settingsManager.removeSearchHistoryItem(item)
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 11, weight: .semibold))
@@ -200,27 +186,21 @@ struct SearchView: View {
 
     // MARK: - Search Results
 
-    private var searchResultsList: some View {
+    private func resultsList(_ tracks: [Track]) -> some View {
         List {
-            if let errorMessage {
-                errorPill(errorMessage)
-                    .listRowBackground(Color.clear)
-                    .listRowInsets(EdgeInsets(top: 0, leading: DS.Spacing.md, bottom: DS.Spacing.sm, trailing: DS.Spacing.md))
-            }
-
-            if isSearching && results.isEmpty {
+            if results.isLoading && tracks.isEmpty {
                 ForEach(0..<6, id: \.self) { _ in
                     skeletonRow
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .listRowInsets(EdgeInsets(top: 4, leading: DS.Spacing.md, bottom: 4, trailing: DS.Spacing.md))
                 }
-            } else if results.isEmpty && !isSearching {
+            } else if tracks.isEmpty {
                 emptyResultsView
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
             } else {
-                ForEach(results) { track in
+                ForEach(tracks) { track in
                     let isCurrent = playerManager.currentTrack?.id == track.id
                     Button {
                         Haptics.light()
@@ -228,7 +208,7 @@ struct SearchView: View {
                         recentlyPlayedManager.trackPlayed(track)
                         selectedTab = .favorites
                     } label: {
-                        HStack(spacing: DS.Spacing.md) {
+                        HStack(spacing: DS.Spacing.sm) {
                             TrackThumbnail(url: track.thumbnailURL, size: 52, cornerRadius: DS.Radius.sm)
 
                             VStack(alignment: .leading, spacing: 2) {
@@ -236,8 +216,8 @@ struct SearchView: View {
                                     .font(DS.Typography.bodyEm)
                                     .lineLimit(1)
                                     .foregroundColor(isCurrent ? tokens.accent : tokens.textPrimary)
-                                HStack(spacing: 6) {
-                                    if isCurrent {
+                                HStack(spacing: 4) {
+                                    if playerManager.currentTrack?.id == track.id {
                                         NowPlayingIndicator(isPlaying: playerManager.isPlaying, accent: tokens.accent)
                                     }
                                     Text(track.artist)
@@ -326,7 +306,7 @@ struct SearchView: View {
             recentlyPlayedManager.trackPlayed(track)
             selectedTab = .favorites
         } label: {
-            HStack(spacing: DS.Spacing.md) {
+            HStack(spacing: DS.Spacing.sm) {
                 TrackThumbnail(url: track.thumbnailURL, size: 56, cornerRadius: DS.Radius.sm)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
@@ -360,7 +340,6 @@ struct SearchView: View {
         } label: {
             VStack(alignment: .leading, spacing: DS.Spacing.sm) {
                 TrackThumbnail(url: track.thumbnailURL, size: nil, cornerRadius: DS.Radius.md)
-                    .aspectRatio(1, contentMode: .fit)
                 Text(track.title)
                     .font(DS.Typography.captionStrong)
                     .foregroundColor(tokens.textPrimary)
@@ -379,25 +358,35 @@ struct SearchView: View {
 
     // MARK: - Search
 
-    private func performSearch(query: String) async {
-        guard !query.isEmpty else {
-            results = []
-            errorMessage = nil
+    private func runSearch(for raw: String) async {
+        let trimmed = raw.trimmingCharacters(in: .whitespaces)
+        guard trimmed.count >= 3 else {
+            results = .idle
             return
         }
 
-        isSearching = true
-        errorMessage = nil
-        defer { isSearching = false }
+        // Debounce: wait 600ms before hitting the network, then re-check
+        // whether the user kept typing. `.task(id: query)` cancels the
+        // prior task automatically when the query changes, so the inner
+        // sleep + re-check is just an optimization for back-to-back edits.
+        do {
+            try await Task.sleep(nanoseconds: 600_000_000)
+        } catch {
+            return
+        }
+        try? Task.checkCancellation()
+
+        results = .loading
 
         do {
-            results = try await searchService.search(query: query)
-            settingsManager.addSearchToHistory(query)
+            let tracks = try await searchService.search(query: trimmed)
+            try Task.checkCancellation()
+            results = .loaded(tracks)
+            settingsManager.addSearchToHistory(trimmed)
+        } catch is CancellationError {
+            // Superseded by a newer query; do not flip the state.
         } catch {
-            if !(error is CancellationError) {
-                errorMessage = error.localizedDescription
-            }
-            results = []
+            results = .failed(error)
         }
     }
 }
