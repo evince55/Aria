@@ -39,6 +39,10 @@ private struct EQControllerKey: EnvironmentKey {
     @MainActor static var defaultValue: EQController { EQController() }
 }
 
+private struct NavigationCoordinatorKey: EnvironmentKey {
+    @MainActor static var defaultValue: NavigationCoordinator { NavigationCoordinator() }
+}
+
 extension EnvironmentValues {
     var playerManager: PlayerManager {
         get { self[PlayerManagerKey.self] }
@@ -67,5 +71,9 @@ extension EnvironmentValues {
     var eqController: EQController {
         get { self[EQControllerKey.self] }
         set { self[EQControllerKey.self] = newValue }
+    }
+    var navigationCoordinator: NavigationCoordinator {
+        get { self[NavigationCoordinatorKey.self] }
+        set { self[NavigationCoordinatorKey.self] = newValue }
     }
 }

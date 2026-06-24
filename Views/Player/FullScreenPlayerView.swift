@@ -6,28 +6,35 @@ struct FullScreenPlayerView: View {
     @EnvironmentObject private var playlistsManager: PlaylistsManager
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
     @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var nav: NavigationCoordinator
 
     var onDismiss: () -> Void
 
-    @State private var showEQ = false
-    @State private var showAddToPlaylist = false
-    @State private var showQueue = false
     @State private var dragOffset: CGFloat = 0
 
     private let dragThreshold: CGFloat = 120
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack {
-                themeManager.background
-                    .ignoresSafeArea()
+        ZStack {
+            themeManager.background
+                .ignoresSafeArea()
 
-                VStack(spacing: 0) {
-                    HStack {
-                        Capsule()
-                            .fill(Color.secondary.opacity(0.5))
-                            .frame(width: 36, height: 5)
-                        Spacer()
+            VStack(spacing: 0) {
+                HStack {
+                    Button {
+                        onDismiss()
+                    } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.title3)
+                            .foregroundColor(themeManager.textPrimary)
+                    }
+                    .accessibilityLabel("Close player")
+
+                    Spacer()
+
+                    Button {
+                        nav.presentedSheet = .queue
+                    } label: {
                         if !playerManager.queue.isEmpty {
                             ZStack(alignment: .topTrailing) {
                                 Image(systemName: "list.bullet")
@@ -44,69 +51,68 @@ struct FullScreenPlayerView: View {
                                 .foregroundColor(themeManager.textSecondary)
                         }
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 8)
-                    .padding(.bottom, 20)
-                    .contentShape(Rectangle())
-                    .onTapGesture { showQueue = true }
-
-                    if let track = playerManager.currentTrack {
-                        artworkSection(track: track, size: geometry.size)
-                        trackInfoSection(track: track)
-                        seekBarSection
-                        transportControls
-                        secondaryControls(track: track)
-                        if playerManager.playbackState == .loading {
-                            ProgressView()
-                                .scaleEffect(1.2)
-                                .tint(themeManager.theme.accentColor)
-                                .padding(.top, 8)
-                        }
-                    } else {
-                        Spacer()
-                        Text("No track playing")
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-
-                    Spacer()
+                    .accessibilityLabel("Show queue")
                 }
                 .padding(.horizontal, 24)
+                .padding(.top, 8)
+                .padding(.bottom, 20)
+
+                if let track = playerManager.currentTrack {
+                    artworkSection(track: track)
+                    trackInfoSection(track: track)
+                    seekBarSection
+                    transportControls
+                    secondaryControls(track: track)
+                    if playerManager.playbackState == .loading {
+                        ProgressView()
+                            .scaleEffect(1.2)
+                            .tint(themeManager.theme.accentColor)
+                            .padding(.top, 8)
+                    }
+                } else {
+                    Spacer()
+                    Text("No track playing")
+                        .foregroundColor(.secondary)
+                    Spacer()
+                }
+
+                Spacer()
             }
-            .offset(y: dragOffset)
-            .gesture(
-                DragGesture()
-                    .onChanged { value in
-                        if value.translation.height > 0 {
-                            dragOffset = value.translation.height
-                        }
+            .padding(.horizontal, 24)
+        }
+        .offset(y: dragOffset)
+        .gesture(
+            DragGesture()
+                .onChanged { value in
+                    if value.translation.height > 0 {
+                        dragOffset = value.translation.height
                     }
-                    .onEnded { value in
-                        if value.translation.height > dragThreshold {
-                            onDismiss()
-                        }
-                        withAnimation(.spring(response: 0.3)) {
-                            dragOffset = 0
-                        }
+                }
+                .onEnded { value in
+                    if value.translation.height > dragThreshold {
+                        onDismiss()
                     }
-            )
-        }
-        .sheet(isPresented: $showEQ) {
-            EqualizerView(playerManager: playerManager, themeManager: themeManager)
-        }
-        .sheet(isPresented: $showAddToPlaylist) {
-            addToPlaylistSheet
-        }
-        .sheet(isPresented: $showQueue) {
-            QueueView(playerManager: playerManager, themeManager: themeManager)
+                    withAnimation(.spring(response: 0.3)) {
+                        dragOffset = 0
+                    }
+                }
+        )
+        .sheet(item: $nav.presentedSheet) { sheet in
+            switch sheet {
+            case .equalizer:
+                EqualizerView()
+            case .addToPlaylist:
+                addToPlaylistSheet
+            case .queue:
+                QueueView()
+            }
         }
     }
 
     // MARK: - Artwork
 
-    private func artworkSection(track: Track, size: CGSize) -> some View {
-        let maxWidth = min(size.width * 0.8, 340)
-        let maxHeight = min(maxWidth, size.height * 0.35)
+    private func artworkSection(track: Track) -> some View {
+        let side: CGFloat = 290
 
         return Group {
             if let url = track.thumbnailURL {
@@ -115,13 +121,13 @@ struct FullScreenPlayerView: View {
                         .fill(themeManager.dividerColor)
                 }
                 .aspectRatio(contentMode: .fit)
-                .frame(maxWidth: maxWidth, maxHeight: maxHeight)
+                .frame(width: side, height: side)
                 .cornerRadius(12)
                 .shadow(color: .black.opacity(0.3), radius: 16, y: 4)
             } else {
                 Rectangle()
                     .fill(themeManager.dividerColor)
-                    .frame(maxWidth: maxWidth, maxHeight: maxHeight)
+                    .frame(width: side, height: side)
                     .cornerRadius(12)
             }
         }
@@ -239,13 +245,13 @@ struct FullScreenPlayerView: View {
                     .foregroundColor(favoritesManager.isFavorite(track) ? .red : themeManager.textPrimary)
             }
 
-            Button { showAddToPlaylist = true } label: {
+            Button { nav.presentedSheet = .addToPlaylist } label: {
                 Image(systemName: "text.badge.plus")
                     .font(.title3)
                     .foregroundColor(themeManager.textPrimary)
             }
 
-            Button { showEQ = true } label: {
+            Button { nav.presentedSheet = .equalizer } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.title3)
                     .foregroundColor(themeManager.textPrimary)
@@ -285,7 +291,7 @@ struct FullScreenPlayerView: View {
                             if let track = playerManager.currentTrack {
                                 playlistsManager.addTrack(track, to: playlist)
                                 recentlyPlayedManager.trackAdded(track)
-                                showAddToPlaylist = false
+                                nav.presentedSheet = nil
                             }
                         } label: {
                             HStack {
@@ -308,7 +314,7 @@ struct FullScreenPlayerView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { showAddToPlaylist = false }
+                    Button("Done") { nav.presentedSheet = nil }
                 }
             }
         }

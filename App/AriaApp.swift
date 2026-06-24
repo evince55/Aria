@@ -13,6 +13,7 @@ struct AriaApp: App {
     @StateObject private var settingsManager = SettingsManager()
     @StateObject private var themeManager: ThemeManager
     @StateObject private var eqController: EQController
+    @StateObject private var navigationCoordinator = NavigationCoordinator()
 
     init() {
         do {
@@ -53,6 +54,7 @@ struct AriaApp: App {
                 .environmentObject(settingsManager)
                 .environmentObject(themeManager)
                 .environmentObject(eqController)
+                .environmentObject(navigationCoordinator)
         }
     }
 
