@@ -20,12 +20,17 @@ final class PlayerManager: NSObject, ObservableObject {
 
     let eq: EQController
 
-    enum PlaybackState: Int {
-        case idle = -1
-        case loading = 3
-        case playing = 1
-        case paused = 2
-        case ended = 0
+    enum PlaybackState: Equatable {
+        case idle
+        case loading
+        case playing
+        case paused
+        case ended
+        /// Engine path is downloading the source stream to `EQCache`
+        /// before the first buffer can be scheduled. `progress` is in
+        /// `0.0...1.0`; an indeterminate download (no `Content-Length`
+        /// from the server) reports `0` until completion.
+        case preparingDownload(progress: Double)
     }
 
     enum RepeatMode: Int, CaseIterable {
@@ -76,7 +81,7 @@ final class PlayerManager: NSObject, ObservableObject {
     private var pendingEngineSwitch = false
     var currentStreamURL: URL?
     private var downloadedFileURL: URL?
-    private var downloadTask: URLSessionDataTaskProtocol?
+    private var downloadTask: Task<Void, Never>?
     private var isStartingEngine = false
     var playGeneration = 0
 
@@ -446,58 +451,48 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private func downloadAndPlayEngine(url: URL) {
         currentStreamURL = url
-        playbackState = .loading
 
         let cacheURL = EQCache.shared.cacheURL(for: url)
         let cached = FileManager.default.fileExists(atPath: cacheURL.path)
         log.notice("downloadAndPlayEngine: cache=\(cached ? "hit" : "miss", privacy: .public) path=\(cacheURL.path, privacy: .public)")
         if cached {
+            playbackState = .loading
             startEngine(with: cacheURL)
             return
         }
 
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("aria_eq_\(UUID().uuidString)")
-
+        playbackState = .preparingDownload(progress: 0)
         downloadTask?.cancel()
-        downloadTask = urlSession.dataTask(with: url) { [weak self] data, _, error in
+        let streamURL = url
+        let targetCacheURL = cacheURL
+        downloadTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            if let error = error {
-                log.error("Download error: \(error.localizedDescription, privacy: .public)")
-                DispatchQueue.main.async {
-                    self.downloadTask = nil
-                    self.handleFetchError()
-                }
-                return
-            }
-            guard let data else {
-                DispatchQueue.main.async {
-                    self.downloadTask = nil
-                    self.handleFetchError()
-                }
-                return
-            }
             do {
-                try data.write(to: tempURL)
-                let cacheDir = cacheURL.deletingLastPathComponent()
+                let downloadedURL = try await self.urlSession.downloadWithProgress(
+                    from: streamURL,
+                    onProgress: { progress in
+                        Task { @MainActor [weak self] in
+                            self?.playbackState = .preparingDownload(progress: progress)
+                        }
+                    }
+                )
+                let cacheDir = targetCacheURL.deletingLastPathComponent()
                 try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-                if FileManager.default.fileExists(atPath: cacheURL.path) {
-                    try FileManager.default.removeItem(at: cacheURL)
+                if FileManager.default.fileExists(atPath: targetCacheURL.path) {
+                    try FileManager.default.removeItem(at: targetCacheURL)
                 }
-                try FileManager.default.moveItem(at: tempURL, to: cacheURL)
-                DispatchQueue.main.async {
-                    self.downloadTask = nil
-                    self.startEngine(with: cacheURL)
-                }
+                try FileManager.default.moveItem(at: downloadedURL, to: targetCacheURL)
+                self.startEngine(with: targetCacheURL)
+            } catch is CancellationError {
+                // Newer play()/stop arrived; nothing to do.
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                // URLSession.bytes throws URLError(.cancelled) when the
+                // wrapping Task is cancelled. Treat as a no-op.
             } catch {
-                log.error("Write error: \(error, privacy: .public)")
-                try? FileManager.default.removeItem(at: tempURL)
-                DispatchQueue.main.async {
-                    self.downloadTask = nil
-                    self.playAVPlayer(url: url)
-                }
+                log.error("Download error: \(error.localizedDescription, privacy: .public)")
+                self.playAVPlayer(url: streamURL)
             }
         }
-        downloadTask?.resume()
     }
 
     private func startEngine(with fileURL: URL) {

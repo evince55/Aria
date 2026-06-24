@@ -21,6 +21,14 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
     /// Test sets this to control the response. Used by `StreamResolver`.
     var dataFromHandler: ((URL) async throws -> (Data, URLResponse))?
 
+    /// Closure invoked for each `downloadWithProgress(from:onProgress:)`
+    /// call. Test sets this to simulate a download and (optionally)
+    /// report progress values to the engine path.
+    /// - Returns the on-disk URL where the "downloaded" file should live.
+    /// - Reports progress via the supplied closure; the closure is
+    ///   `@Sendable` so the test may invoke it from any context.
+    var downloadHandler: ((URL, @escaping @Sendable (Double) -> Void) async throws -> URL)?
+
     @discardableResult
     func dataTask(
         with url: URL,
@@ -43,6 +51,17 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
             return try await handler(url)
         }
         return (Data(), URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil))
+    }
+
+    func downloadWithProgress(
+        from url: URL,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> URL {
+        recordedRequests.append(RecordedRequest(url: url, completionHandler: { _, _, _ in }))
+        guard let handler = downloadHandler else {
+            throw URLError(.cancelled)
+        }
+        return try await handler(url, onProgress)
     }
 }
 
@@ -260,9 +279,78 @@ final class PlayerManagerTests: XCTestCase {
                 )
             }
         }
+        // Default downloadHandler in MockURLSession returns an empty
+        // temp file; startEngine will then fail to find an audio track
+        // and fall back to AVPlayer. The test only cares that a request
+        // was recorded.
         player.play(makeTrack(id: "abc", title: "A"))
         try? await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertGreaterThan(self.mockSession.recordedRequests.count, 0)
+    }
+
+    func test_PlayWithEQEnabledEntersPreparingDownloadState() async {
+        // When EQ is on and the stream isn't cached, playbackState
+        // must transition through .preparingDownload so the UI can
+        // surface a "preparing" indicator before the first buffer
+        // is scheduled.
+        player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        mockSession.dataFromHandler = { url in
+            (
+                Data(#"{"url":"/api/stream/abc.m4a","cached":false}"#.utf8),
+                HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+        mockSession.downloadHandler = { url, onProgress in
+            onProgress(0.0)
+            onProgress(0.5)
+            // Block briefly so the test can observe the state.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            onProgress(1.0)
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mock_download_\(UUID().uuidString)")
+            try Data().write(to: tempURL)
+            return tempURL
+        }
+
+        var states: [PlayerManager.PlaybackState] = []
+        let cancellable = player.$playbackState.sink { states.append($0) }
+        defer { cancellable.cancel() }
+
+        player.play(makeTrack(id: "abc", title: "A"))
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertTrue(
+            states.contains(where: {
+                if case .preparingDownload = $0 { return true }
+                return false
+            }),
+            "expected .preparingDownload to appear in state transitions, got \(states)"
+        )
+    }
+
+    func test_PlayWithEQEnabledCancelledDownloadDoesNotCrash() async {
+        // Sanity: a fast play()→play() sequence should not crash even
+        // if the first download is in flight. The first download task
+        // is cancelled and the closure exits via CancellationError;
+        // the second play() starts a fresh download.
+        player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        mockSession.dataFromHandler = { url in
+            (
+                Data(#"{"url":"/api/stream/abc.m4a","cached":false}"#.utf8),
+                HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+        mockSession.downloadHandler = { _, _ in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            throw URLError(.cancelled)
+        }
+        player.play(makeTrack(id: "abc", title: "A"))
+        // Let the stream resolution + download task start.
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        player.play(makeTrack(id: "def", title: "B"))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        // If we got here without a crash, the test passes.
+        XCTAssertTrue(true)
     }
 
     // MARK: - Lifecycle (2)

@@ -18,10 +18,7 @@ struct MiniPlayerView: View {
                             .font(.system(size: 13, weight: .semibold))
                             .lineLimit(1)
                             .foregroundColor(.primary)
-                        Text(track.artist)
-                            .font(.system(size: 11))
-                            .lineLimit(1)
-                            .foregroundColor(.secondary)
+                        subtitle
                     }
                 } else {
                     Text("Not playing")
@@ -31,17 +28,7 @@ struct MiniPlayerView: View {
 
                 Spacer()
 
-                Button {
-                    playerManager.togglePlayPause()
-                } label: {
-                    Image(systemName: playerManager.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(.primary)
-                        .frame(width: 40, height: 40)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(playerManager.isPlaying ? "Pause" : "Play")
+                trailingButton
             }
             .padding(.leading, 4)
             .padding(.trailing, 8)
@@ -49,5 +36,49 @@ struct MiniPlayerView: View {
             .background(.ultraThinMaterial)
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var subtitle: some View {
+        if case .preparingDownload(let progress) = playerManager.playbackState {
+            HStack(spacing: 6) {
+                ProgressView(value: progress)
+                    .progressViewStyle(.linear)
+                    .tint(.secondary)
+                Text("Preparing…")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+        } else {
+            Text(playerManager.currentTrack?.artist ?? "")
+                .font(.system(size: 11))
+                .lineLimit(1)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var trailingButton: some View {
+        if case .preparingDownload = playerManager.playbackState {
+            // No transport control while the engine is still downloading
+            // — tapping play would race the in-flight download and
+            // produce no audible difference.
+            ProgressView()
+                .progressViewStyle(.circular)
+                .controlSize(.small)
+                .frame(width: 40, height: 40)
+        } else {
+            Button {
+                playerManager.togglePlayPause()
+            } label: {
+                Image(systemName: playerManager.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 18))
+                    .foregroundColor(.primary)
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(playerManager.isPlaying ? "Pause" : "Play")
+        }
     }
 }
