@@ -364,6 +364,58 @@ final class PlayerManagerTests: XCTestCase {
         XCTAssertFalse(player.isPlaying)
     }
 
+    // MARK: - Local file playback
+
+    func test_playLocalTrack_setsCurrentTrack() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local_\(UUID().uuidString).mp3")
+        try? Data(repeating: 0, count: 100).write(to: url)
+        let local = LocalTrack(
+            id: UUID(),
+            title: "Local Song",
+            artist: "Local Artist",
+            fileName: url.lastPathComponent,
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        player.play(localTrack: local, fileURL: url)
+
+        XCTAssertEqual(player.currentTrack?.title, "Local Song")
+        XCTAssertEqual(player.currentTrack?.artist, "Local Artist")
+        XCTAssertTrue(player.currentTrack?.id.hasPrefix("local:") ?? false)
+        XCTAssertTrue(player.isPlaying)
+    }
+
+    func test_playLocalTrackWithEQ_skipsBackend() async {
+        player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local_\(UUID().uuidString).mp3")
+        try? Data(repeating: 0, count: 100).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let local = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: "A",
+            fileName: url.lastPathComponent,
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+
+        // Track requests before and after.
+        let before = mockSession.recordedRequests.count
+        player.play(localTrack: local, fileURL: url)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // No new backend / stream resolution requests should be made
+        // — the local file plays directly through the engine path.
+        XCTAssertEqual(mockSession.recordedRequests.count, before,
+                       "local file playback should not hit the backend")
+    }
+
     // MARK: - Helpers
 
     private func makeTrack(id: String, title: String) -> Track {

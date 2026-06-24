@@ -39,6 +39,17 @@ private struct EQControllerKey: EnvironmentKey {
     @MainActor static var defaultValue: EQController { EQController() }
 }
 
+private struct LocalLibraryManagerKey: EnvironmentKey {
+    @MainActor static var defaultValue: LocalLibraryManager {
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let dir = docs.appendingPathComponent("AriaLibrary", isDirectory: true)
+        return LocalLibraryManager(
+            store: JSONFileStore(filename: "local_library.json"),
+            libraryDirectory: dir
+        )
+    }
+}
+
 private struct NavigationCoordinatorKey: EnvironmentKey {
     @MainActor static var defaultValue: NavigationCoordinator { NavigationCoordinator() }
 }
@@ -71,6 +82,10 @@ extension EnvironmentValues {
     var eqController: EQController {
         get { self[EQControllerKey.self] }
         set { self[EQControllerKey.self] = newValue }
+    }
+    var localLibraryManager: LocalLibraryManager {
+        get { self[LocalLibraryManagerKey.self] }
+        set { self[LocalLibraryManagerKey.self] = newValue }
     }
     var navigationCoordinator: NavigationCoordinator {
         get { self[NavigationCoordinatorKey.self] }

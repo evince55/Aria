@@ -13,6 +13,7 @@ struct AriaApp: App {
     @StateObject private var settingsManager = SettingsManager()
     @StateObject private var themeManager: ThemeManager
     @StateObject private var eqController: EQController
+    @StateObject private var localLibraryManager: LocalLibraryManager
     @StateObject private var navigationCoordinator = NavigationCoordinator()
 
     init() {
@@ -25,9 +26,16 @@ struct AriaApp: App {
         }
         let settings = SettingsManager()
         let eq = EQController()
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let libraryDir = docs.appendingPathComponent("AriaLibrary", isDirectory: true)
+        let libraryManager = LocalLibraryManager(
+            store: JSONFileStore(filename: "local_library.json"),
+            libraryDirectory: libraryDir
+        )
         _themeManager = StateObject(wrappedValue: ThemeManager(settings: settings))
         _settingsManager = StateObject(wrappedValue: settings)
         _eqController = StateObject(wrappedValue: eq)
+        _localLibraryManager = StateObject(wrappedValue: libraryManager)
         _playerManager = StateObject(wrappedValue: PlayerManager(urlSession: Self.makeProductionSession(), eq: eq))
     }
 
@@ -54,6 +62,7 @@ struct AriaApp: App {
                 .environmentObject(settingsManager)
                 .environmentObject(themeManager)
                 .environmentObject(eqController)
+                .environmentObject(localLibraryManager)
                 .environmentObject(navigationCoordinator)
         }
     }

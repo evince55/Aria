@@ -218,6 +218,44 @@ final class PlayerManager: NSObject, ObservableObject {
         fetchStreamURL(for: track.id, generation: gen)
     }
 
+    /// Plays a file that already lives on the device (imported from the
+    /// Files app via the local library). The track's on-disk `fileURL`
+    /// is passed in so `PlayerManager` doesn't need a reference to the
+    /// `LocalLibraryManager`.
+    ///
+    /// - With EQ on, the file plays through the engine path. Since the
+    ///   file is already local, the download step is skipped and the
+    ///   engine starts immediately.
+    /// - With EQ off, the file plays through the AVPlayer path.
+    func play(localTrack: LocalTrack, fileURL: URL) {
+        playGeneration += 1
+        let gen = playGeneration
+        log.notice("play local track=\(localTrack.id, privacy: .public) gen=\(gen) eq=\(self.eq.isEnabled, privacy: .public)")
+        nowPlaying.activateAudioSession()
+
+        currentTrack = Track(
+            id: "local:\(localTrack.id.uuidString)",
+            title: localTrack.title,
+            artist: localTrack.artist ?? "This Device",
+            thumbnailURL: nil
+        )
+        isPlaying = true
+        playbackState = .loading
+        currentTime = 0
+        duration = 0
+        stopAllPlayback()
+        nowPlaying.updateNowPlaying()
+        // No artwork to load for local files; NowPlaying handles the
+        // nil case (shows the default placeholder).
+        currentStreamURL = fileURL
+        if eq.isEnabled {
+            downloadAndPlayEngine(url: fileURL)
+        } else {
+            playAVPlayer(url: fileURL)
+        }
+        _ = gen  // reserved for future generation-based cancellation
+    }
+
     func togglePlayPause() {
         guard currentTrack != nil else { return }
 
@@ -451,6 +489,14 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private func downloadAndPlayEngine(url: URL) {
         currentStreamURL = url
+
+        // Local files (imported via the Library tab) don't need a
+        // download — skip straight to the engine.
+        if url.isFileURL {
+            playbackState = .loading
+            startEngine(with: url)
+            return
+        }
 
         let cacheURL = EQCache.shared.cacheURL(for: url)
         let cached = FileManager.default.fileExists(atPath: cacheURL.path)
