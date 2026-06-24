@@ -58,11 +58,13 @@ final class LocalLibraryManager: ObservableObject {
         let artist = await Self.readArtist(at: destURL)
         let size = (try? fileManager.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? Int64(original.count)
         let duration = await Self.readDuration(at: destURL)
+        let artworkURL = await extractArtwork(from: destURL, trackID: id)
 
         let track = LocalTrack(
             id: id,
             title: title,
             artist: artist,
+            artworkURL: artworkURL,
             fileName: fileName,
             importedAt: Date(),
             fileSizeBytes: size,
@@ -78,6 +80,9 @@ final class LocalLibraryManager: ObservableObject {
     func remove(_ track: LocalTrack) {
         let url = fileURL(for: track)
         try? fileManager.removeItem(at: url)
+        if let artworkURL = track.artworkURL {
+            try? fileManager.removeItem(at: artworkURL)
+        }
         tracks.removeAll { $0.id == track.id }
         save()
     }
@@ -113,6 +118,44 @@ final class LocalLibraryManager: ObservableObject {
         guard let duration = try? await asset.load(.duration) else { return nil }
         let seconds = duration.seconds
         return seconds.isFinite ? seconds : nil
+    }
+
+    /// Extracts embedded artwork (ID3 APIC for MP3, PICTURE for FLAC,
+    /// etc.) and writes it to `libraryDirectory/artwork/<uuid>.<ext>`.
+    /// Returns the file URL, or nil if the file has no artwork or the
+    /// extraction failed. Best-effort; a missing artwork file is not
+    /// considered an error.
+    private func extractArtwork(from fileURL: URL, trackID: UUID) async -> URL? {
+        let asset = AVURLAsset(url: fileURL)
+        guard let metadata = try? await asset.load(.commonMetadata) else { return nil }
+        let artworkItem = metadata.first { item in
+            item.commonKey?.rawValue == "artwork"
+        }
+        guard let artworkItem else { return nil }
+        guard let data = try? await artworkItem.load(.dataValue), !data.isEmpty else { return nil }
+
+        let artworkDir = libraryDirectory.appendingPathComponent("artwork", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: artworkDir, withIntermediateDirectories: true)
+        } catch {
+            return nil
+        }
+        // JPEG starts with FF D8 FF; PNG starts with 89 50 4E 47.
+        let ext: String
+        if data.starts(with: [0xFF, 0xD8]) {
+            ext = "jpg"
+        } else if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+            ext = "png"
+        } else {
+            ext = "img"
+        }
+        let dest = artworkDir.appendingPathComponent("\(trackID.uuidString).\(ext)")
+        do {
+            try data.write(to: dest, options: .atomic)
+            return dest
+        } catch {
+            return nil
+        }
     }
 
     // MARK: - Persistence

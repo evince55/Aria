@@ -49,6 +49,7 @@ final class LocalLibraryManagerTests: XCTestCase {
             id: UUID(),
             title: "Pre-existing",
             artist: "Test",
+            artworkURL: nil,
             fileName: "abc.mp3",
             importedAt: Date(),
             fileSizeBytes: 1234,
@@ -143,5 +144,43 @@ final class LocalLibraryManagerTests: XCTestCase {
         let url = manager.fileURL(for: track)
         XCTAssertEqual(url.deletingLastPathComponent().path, libraryDir.path)
         XCTAssertTrue(url.lastPathComponent.hasSuffix(".mp3"))
+    }
+
+    // MARK: - Artwork
+
+    func test_import_fileWithoutArtworkSetsArtworkURLNil() async throws {
+        // The synthetic test fixture has no embedded artwork.
+        let source = try makeSourceFile()
+        let track = try await manager.importFile(at: source)
+        XCTAssertNil(track.artworkURL, "no embedded artwork -> artworkURL is nil")
+    }
+
+    func test_remove_deletesArtworkFile() async throws {
+        // Set up an artwork file on disk for a track, then remove.
+        let source = try makeSourceFile()
+        var track = try await manager.importFile(at: source)
+        let artworkURL = libraryDir.appendingPathComponent("artwork").appendingPathComponent("\(track.id.uuidString).jpg")
+        try FileManager.default.createDirectory(at: artworkURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // A 1x1 JPEG.
+        let jpegBytes: [UInt8] = [0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, 0x4A, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0]
+        try Data(jpegBytes).write(to: artworkURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artworkURL.path))
+
+        // Mutate the track in-memory to attach the artwork URL, then remove.
+        track = LocalTrack(
+            id: track.id,
+            title: track.title,
+            artist: track.artist,
+            artworkURL: artworkURL,
+            fileName: track.fileName,
+            importedAt: track.importedAt,
+            fileSizeBytes: track.fileSizeBytes,
+            durationSeconds: track.durationSeconds
+        )
+        // Replace the in-memory track: the manager's `tracks` array
+        // holds the unmodified track, so we re-add with the artwork
+        // baked in.
+        manager.remove(track)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: artworkURL.path))
     }
 }

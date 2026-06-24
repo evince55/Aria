@@ -6,13 +6,17 @@ struct MiniPlayerView: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 0) {
+            HStack(spacing: 8) {
                 Image(systemName: "chevron.up")
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(.secondary)
-                    .frame(width: 36)
+                    .frame(width: 28)
 
                 if let track = playerManager.currentTrack {
+                    artworkThumbnail
+                        .frame(width: 36, height: 36)
+                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+
                     VStack(alignment: .leading, spacing: 1) {
                         Text(track.title)
                             .font(.system(size: 13, weight: .semibold))
@@ -36,6 +40,17 @@ struct MiniPlayerView: View {
             .background(.ultraThinMaterial)
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var artworkThumbnail: some View {
+        if let url = playerManager.currentArtworkURL {
+            AsyncCachedImage(url: url) {
+                Rectangle().fill(.gray.opacity(0.3))
+            }
+        } else {
+            Rectangle().fill(.gray.opacity(0.3))
+        }
     }
 
     @ViewBuilder

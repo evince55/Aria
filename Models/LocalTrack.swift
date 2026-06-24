@@ -11,6 +11,7 @@ struct LocalTrack: Identifiable, Codable, Hashable {
     let id: UUID
     let title: String
     let artist: String?
+    let artworkURL: URL?
     let fileName: String
     let importedAt: Date
     let fileSizeBytes: Int64

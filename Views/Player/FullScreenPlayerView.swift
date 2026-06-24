@@ -115,7 +115,7 @@ struct FullScreenPlayerView: View {
         let side: CGFloat = 290
 
         return Group {
-            if let url = track.thumbnailURL {
+            if let url = playerManager.currentArtworkURL {
                 AsyncCachedImage(url: url) {
                     Rectangle()
                         .fill(themeManager.dividerColor)

@@ -103,10 +103,9 @@ struct LibraryView: View {
             playTrack(track)
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: importingTrackIDs.contains(track.id) ? "hourglass" : "music.note")
-                    .font(.title3)
-                    .foregroundColor(tokens.accent)
-                    .frame(width: 32)
+                artworkView(for: track)
+                    .frame(width: 48, height: 48)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
@@ -139,6 +138,29 @@ struct LibraryView: View {
             }
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func artworkView(for track: LocalTrack) -> some View {
+        if let url = track.artworkURL {
+            // AsyncCachedImage handles in-memory caching so list
+            // scrolling doesn't re-decode the JPEG every redraw.
+            AsyncCachedImage(url: url) {
+                placeholderArtwork
+            }
+        } else {
+            placeholderArtwork
+        }
+    }
+
+    private var placeholderArtwork: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(tokens.dividerColor)
+            Image(systemName: "music.note")
+                .font(.title3)
+                .foregroundColor(tokens.textSecondary)
+        }
     }
 
     // MARK: - Actions

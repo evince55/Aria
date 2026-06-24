@@ -10,6 +10,13 @@ final class PlayerManager: NSObject, ObservableObject {
     // MARK: - Published state
 
     @Published var currentTrack: Track?
+    /// Resolved artwork URL for the current track — either the YouTube
+    /// thumbnail (for streamed tracks) or the extracted embedded
+    /// artwork file (for local imports). `nil` when no artwork is
+    /// available. The view layer uses this instead of
+    /// `currentTrack.thumbnailURL` so local files can show their
+    /// embedded artwork without going through `Track`.
+    @Published private(set) var currentArtworkURL: URL?
     @Published var isPlaying = false
     @Published var playbackState: PlaybackState = .idle
     @Published var currentTime: TimeInterval = 0
@@ -208,6 +215,7 @@ final class PlayerManager: NSObject, ObservableObject {
         nowPlaying.activateAudioSession()
 
         currentTrack = track
+        currentArtworkURL = track.thumbnailURL
         isPlaying = true
         playbackState = .loading
         currentTime = 0
@@ -230,7 +238,7 @@ final class PlayerManager: NSObject, ObservableObject {
     func play(localTrack: LocalTrack, fileURL: URL) {
         playGeneration += 1
         let gen = playGeneration
-        log.notice("play local track=\(localTrack.id, privacy: .public) gen=\(gen) eq=\(self.eq.isEnabled, privacy: .public)")
+        log.notice("play local track=\(localTrack.id, privacy: .public) gen=\(gen) eq=\(self.eq.isEnabled, privacy: .public) hasArtwork=\(localTrack.artworkURL != nil, privacy: .public)")
         nowPlaying.activateAudioSession()
 
         currentTrack = Track(
@@ -239,14 +247,16 @@ final class PlayerManager: NSObject, ObservableObject {
             artist: localTrack.artist ?? "This Device",
             thumbnailURL: nil
         )
+        currentArtworkURL = localTrack.artworkURL
         isPlaying = true
         playbackState = .loading
         currentTime = 0
         duration = 0
         stopAllPlayback()
         nowPlaying.updateNowPlaying()
-        // No artwork to load for local files; NowPlaying handles the
-        // nil case (shows the default placeholder).
+        if let artworkURL = localTrack.artworkURL {
+            nowPlaying.loadArtwork(from: artworkURL)
+        }
         currentStreamURL = fileURL
         if eq.isEnabled {
             downloadAndPlayEngine(url: fileURL)
