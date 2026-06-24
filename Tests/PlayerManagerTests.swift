@@ -492,6 +492,27 @@ final class PlayerManagerTests: XCTestCase {
         XCTAssertEqual(track.artist, "This Device")
     }
 
+    func test_playSlice_startsAtIndexAndQueuesRemainder() {
+        let a = Track(id: "a", title: "A", artist: "x", thumbnailURL: nil, localFileURL: nil)
+        let b = Track(id: "b", title: "B", artist: "x", thumbnailURL: nil, localFileURL: nil)
+        let c = Track(id: "c", title: "C", artist: "x", thumbnailURL: nil, localFileURL: nil)
+        player.playSlice([a, b, c], startIndex: 1)
+        XCTAssertEqual(player.currentTrack?.id, "b")
+        XCTAssertEqual(player.queue.map(\.id), ["c"])
+    }
+
+    func test_playSlice_emptyTracksIsNoOp() {
+        player.playSlice([], startIndex: 0)
+        XCTAssertNil(player.currentTrack)
+    }
+
+    func test_playSlice_startIndexClampedToBounds() {
+        let a = Track(id: "a", title: "A", artist: "x", thumbnailURL: nil, localFileURL: nil)
+        player.playSlice([a], startIndex: 5)
+        XCTAssertEqual(player.currentTrack?.id, "a")
+        XCTAssertTrue(player.queue.isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeTrack(id: String, title: String) -> Track {

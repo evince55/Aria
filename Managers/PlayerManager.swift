@@ -383,6 +383,18 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
+    /// Replaces the queue with `tracks` and starts playback at
+    /// `tracks[startIndex]`. Used by callers that want to play a
+    /// contiguous slice of a library/playlist (e.g. the Library tab
+    /// when the user taps a track in the middle of the list).
+    func playSlice(_ tracks: [Track], startIndex: Int) {
+        guard !tracks.isEmpty else { return }
+        let idx = max(0, min(startIndex, tracks.count - 1))
+        let upcoming = Array(tracks.dropFirst(idx + 1))
+        queue = upcoming
+        play(tracks[idx])
+    }
+
     /// TODO: Currently a no-op distinction — both branches restart the current
     /// track. Replace with a real previous-track implementation that consults
     /// a track history (i.e. the order tracks were played, not the queue).

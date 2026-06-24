@@ -28,6 +28,15 @@ struct LibraryView: View {
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        playAll()
+                    } label: {
+                        Image(systemName: "play.fill")
+                    }
+                    .disabled(libraryManager.tracks.isEmpty)
+                    .accessibilityLabel("Play all tracks")
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         isImporting = true
@@ -270,8 +279,21 @@ struct LibraryView: View {
     }
 
     private func playTrack(_ track: LocalTrack) {
-        let url = libraryManager.fileURL(for: track)
-        playerManager.play(localTrack: track, fileURL: url)
+        // Build the full library as Track objects, then start playback
+        // at the tapped track. Subsequent Next/Previous cycles through
+        // the library in the same order the user sees in the list.
+        let library = libraryManager.tracks
+        let asTracks = library.map { $0.asPlayerTrack(fileURL: libraryManager.fileURL(for: $0)) }
+        let idx = library.firstIndex(where: { $0.id == track.id }) ?? 0
+        playerManager.playSlice(asTracks, startIndex: idx)
+    }
+
+    private func playAll() {
+        guard !libraryManager.tracks.isEmpty else { return }
+        let asTracks = libraryManager.tracks.map {
+            $0.asPlayerTrack(fileURL: libraryManager.fileURL(for: $0))
+        }
+        playerManager.playSlice(asTracks, startIndex: 0)
     }
 
     private func isCurrentTrack(_ track: LocalTrack) -> Bool {
