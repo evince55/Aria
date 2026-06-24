@@ -11,3 +11,4 @@ xcuserdata/
 *.ipa
 *.dSYM.zip
 *.dSYM
+.worktrees/
