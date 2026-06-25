@@ -16,6 +16,32 @@ struct LocalTrack: Identifiable, Codable, Hashable {
     let importedAt: Date
     let fileSizeBytes: Int64
     let durationSeconds: Double?
+    let album: String?
+    let isMissing: Bool
+
+    init(
+        id: UUID,
+        title: String,
+        artist: String?,
+        artworkURL: URL?,
+        fileName: String,
+        importedAt: Date,
+        fileSizeBytes: Int64,
+        durationSeconds: Double?,
+        album: String? = nil,
+        isMissing: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.artworkURL = artworkURL
+        self.fileName = fileName
+        self.importedAt = importedAt
+        self.fileSizeBytes = fileSizeBytes
+        self.durationSeconds = durationSeconds
+        self.album = album
+        self.isMissing = isMissing
+    }
 
     /// Converts this library entry to a `Track` suitable for playback
     /// and for storage in a `Playlist`. The resulting `Track` has

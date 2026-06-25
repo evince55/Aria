@@ -183,4 +183,40 @@ final class LocalLibraryManagerTests: XCTestCase {
         manager.remove(track)
         XCTAssertFalse(FileManager.default.fileExists(atPath: artworkURL.path))
     }
+
+    // MARK: - LocalTrack fields (B1 Task 1)
+
+    func test_localTrack_isMissingDefaultsFalse() {
+        let track = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: "A",
+            artworkURL: nil,
+            fileName: "f.mp3",
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+        XCTAssertFalse(track.isMissing)
+        XCTAssertNil(track.album)
+    }
+
+    func test_localTrack_codableRoundTrip_preservesIsMissingAndAlbum() throws {
+        let original = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: "A",
+            artworkURL: nil,
+            fileName: "f.mp3",
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30,
+            album: "Greatest Hits",
+            isMissing: true
+        )
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(LocalTrack.self, from: data)
+        XCTAssertEqual(decoded.album, "Greatest Hits")
+        XCTAssertTrue(decoded.isMissing)
+    }
 }
