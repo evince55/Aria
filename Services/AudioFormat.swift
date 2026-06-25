@@ -48,4 +48,12 @@ enum AudioFormat: String, Equatable {
         default: return .unknown
         }
     }
+
+    static func probe(url: URL) async -> AudioFormat {
+        let fastPath = detect(url: url)
+        guard fastPath == .unknown else { return fastPath }
+        let asset = AVURLAsset(url: url)
+        _ = try? await asset.load(.tracks)
+        return .unknown
+    }
 }

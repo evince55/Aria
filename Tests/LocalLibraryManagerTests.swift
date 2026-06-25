@@ -319,4 +319,12 @@ final class LocalLibraryManagerTests: XCTestCase {
         XCTAssertFalse(format.isSupported)
         XCTAssertEqual(format.displayName, "OGG")
     }
+
+    func test_formatDetect_unknownExtension_probesAVURLAsset() async throws {
+        let url = tmpDir.appendingPathComponent("weird_\(UUID().uuidString).dat")
+        try Data(repeating: 0, count: 64).write(to: url)
+        let format = await AudioFormat.probe(url: url)
+        XCTAssertEqual(format, .unknown)
+        XCTAssertFalse(format.isSupported)
+    }
 }
