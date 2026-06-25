@@ -95,6 +95,37 @@ final class LocalLibraryManager: ObservableObject {
         libraryDirectory.appendingPathComponent(track.fileName)
     }
 
+    /// Walks the library and updates each track's `isMissing` flag based
+    /// on whether the file still exists on disk. O(n). Persists only if
+    /// any flag changed.
+    func auditMissingFlags() {
+        var changed = false
+        let updated = tracks.map { track -> LocalTrack in
+            let url = fileURL(for: track)
+            let exists = FileManager.default.fileExists(atPath: url.path)
+            if exists != track.isMissing {
+                return track
+            }
+            changed = true
+            return LocalTrack(
+                id: track.id,
+                title: track.title,
+                artist: track.artist,
+                artworkURL: track.artworkURL,
+                fileName: track.fileName,
+                importedAt: track.importedAt,
+                fileSizeBytes: track.fileSizeBytes,
+                durationSeconds: track.durationSeconds,
+                album: track.album,
+                isMissing: !exists
+            )
+        }
+        if changed {
+            tracks = updated
+            save()
+        }
+    }
+
     // MARK: - Metadata extraction
 
     private static func readTitle(at url: URL, fallback: String) async -> String {

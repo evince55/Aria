@@ -184,6 +184,38 @@ final class LocalLibraryManagerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: artworkURL.path))
     }
 
+    // MARK: - auditMissingFlags (B1 Task 2)
+
+    func test_audit_emptyLibrary_noError() {
+        manager.auditMissingFlags()
+        XCTAssertTrue(manager.tracks.allSatisfy { !$0.isMissing })
+    }
+
+    func test_audit_marksFileGoneAfterDeletion() async throws {
+        let source = try makeSourceFile()
+        let track = try await manager.importFile(at: source)
+        let dest = manager.fileURL(for: track)
+
+        XCTAssertFalse(manager.tracks[0].isMissing)
+
+        try FileManager.default.removeItem(at: dest)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dest.path))
+
+        manager.auditMissingFlags()
+        XCTAssertTrue(manager.tracks[0].isMissing)
+    }
+
+    func test_audit_idempotent() async throws {
+        let source = try makeSourceFile()
+        _ = try await manager.importFile(at: source)
+
+        manager.auditMissingFlags()
+        let first = manager.tracks.map(\.isMissing)
+        manager.auditMissingFlags()
+        let second = manager.tracks.map(\.isMissing)
+        XCTAssertEqual(first, second)
+    }
+
     // MARK: - LocalTrack fields (B1 Task 1)
 
     func test_localTrack_isMissingDefaultsFalse() {
