@@ -62,6 +62,8 @@ struct ContentView: View {
                 playlistsManager.flushPendingWrites()
                 recentlyPlayedManager.flushPendingWrites()
                 localLibraryManager.flushPendingWrites()
+            } else if newPhase == .active {
+                localLibraryManager.cleanupOrphans()
             }
         }
         .onAppear {

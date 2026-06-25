@@ -298,10 +298,21 @@ struct LibraryView: View {
                 let track = try await libraryManager.importFile(at: url)
                 importingTrackIDs.insert(track.id)
             } catch let error as ImportError {
-                importError = "\(url.lastPathComponent) is in \(error.format.displayName) format, which isn't supported. Convert to MP3 or FLAC and try again."
+                importError = importErrorMessage(for: error, fileName: url.lastPathComponent)
             } catch {
                 importError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)"
             }
+        }
+    }
+
+    private func importErrorMessage(for error: ImportError, fileName: String) -> String {
+        switch error {
+        case .unsupportedFormat(let format):
+            return "\(fileName) is in \(format.displayName) format, which isn't supported. Convert to MP3 or FLAC and try again."
+        case .fileNotDownloaded:
+            return "\(fileName) hasn't finished downloading from iCloud. Open it in the Files app, wait for the download to finish, then try again."
+        case .zeroByteFile:
+            return "\(fileName) is empty (0 bytes). Pick a different file."
         }
     }
 
