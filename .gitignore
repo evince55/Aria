@@ -12,3 +12,10 @@ xcuserdata/
 *.dSYM.zip
 *.dSYM
 .worktrees/
+
+# Sample data: the directory is tracked (with a .gitkeep) so the
+# structure is reproducible across clones, but its audio contents are
+# user-supplied and never committed.
+LocalLibraryManager.sampleData/*
+!LocalLibraryManager.sampleData/.gitkeep
+!LocalLibraryManager.sampleData/README.md

@@ -1,6 +1,9 @@
 import Foundation
 import AVFoundation
 import Combine
+import os.log
+
+private let log = Logger(subsystem: "com.aria.music", category: "LocalLibraryManager")
 
 /// Owns the on-disk "imported from Files" library. Tracks the metadata
 /// of every file the user has imported (UUID, title, file size,
@@ -21,6 +24,13 @@ final class LocalLibraryManager: ObservableObject {
     private let isCloudFileNotDownloaded: (URL) -> Bool
     private var saveDebouncer: Debouncer!
 
+    /// Runtime location for sample-data files. Sibling to
+    /// `libraryDirectory` (i.e. `Documents/AriaLibrary.sampleData/`).
+    /// The corresponding repo-side template lives at
+    /// `LocalLibraryManager.sampleData/` and is gitignored. See the
+    /// README in that directory for the import workflow.
+    let sampleDataDirectory: URL
+
     init(
         store: KeyValueStore,
         libraryDirectory: URL,
@@ -29,13 +39,17 @@ final class LocalLibraryManager: ObservableObject {
     ) {
         self.store = store
         self.libraryDirectory = libraryDirectory
+        self.sampleDataDirectory = libraryDirectory.deletingLastPathComponent()
+            .appendingPathComponent(libraryDirectory.lastPathComponent + ".sampleData")
         self.fileManager = fileManager
         self.isCloudFileNotDownloaded = isCloudFileNotDownloaded
         self.saveDebouncer = Debouncer(delay: 0.5) { [weak self] in self?.performSave() }
         try? fileManager.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
+        try? fileManager.createDirectory(at: sampleDataDirectory, withIntermediateDirectories: true)
         load()
         auditMissingFlags()
         cleanupOrphans()
+        importSampleDataIfPresent()
     }
 
     nonisolated static func defaultIsCloudFileNotDownloaded(_ url: URL) -> Bool {
@@ -52,6 +66,48 @@ final class LocalLibraryManager: ObservableObject {
     /// transitions so the metadata is durable before the app backgrounds.
     func flushPendingWrites() {
         saveDebouncer?.flush()
+    }
+
+    /// Imports any audio files present in `sampleDataDirectory` that
+    /// are not already in the library (matched by `fileName`).
+    /// Idempotent: re-running on the same set of files is a no-op.
+    /// Source files are not deleted after import.
+    ///
+    /// Called from `init` as fire-and-forget; failures are logged but
+    /// do not block startup. The user sees imported tracks in the
+    /// Library tab once the import completes (typically within a
+    /// second of launch).
+    private func importSampleDataIfPresent() {
+        let sampleDir = sampleDataDirectory
+        let fm = fileManager
+        guard let entries = try? fm.contentsOfDirectory(
+            at: sampleDir,
+            includingPropertiesForKeys: nil
+        ) else {
+            return
+        }
+
+        let knownNames = Set(tracks.map(\.fileName))
+        let audioExtensions: Set<String> = [
+            "mp3", "aac", "alac", "flac", "aiff", "wav", "m4a"
+        ]
+        let newSources = entries.filter { url in
+            let ext = url.pathExtension.lowercased()
+            return audioExtensions.contains(ext) && !knownNames.contains(url.lastPathComponent)
+        }
+        guard !newSources.isEmpty else { return }
+
+        log.notice("importSampleDataIfPresent: importing \(newSources.count) sample file(s)")
+        for source in newSources {
+            Task { [weak self] in
+                guard let self else { return }
+                do {
+                    _ = try await self.importFile(at: source)
+                } catch {
+                    log.error("importSampleDataIfPresent: failed to import \(source.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                }
+            }
+        }
     }
 
     /// Copies the file at `sourceURL` into the library directory and
