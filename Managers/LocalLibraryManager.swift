@@ -85,6 +85,7 @@ final class LocalLibraryManager: ObservableObject {
 
         let title = (await Self.readTitle(at: destURL, fallback: sourceURL.deletingPathExtension().lastPathComponent))
         let artist = await Self.readArtist(at: destURL)
+        let album = await Self.readAlbum(at: destURL)
         let storedSize = (try? fileManager.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? Int64(original.count)
         let duration = await Self.readDuration(at: destURL)
         let artworkURL = await extractArtwork(from: destURL, trackID: id)
@@ -97,7 +98,8 @@ final class LocalLibraryManager: ObservableObject {
             fileName: fileName,
             importedAt: Date(),
             fileSizeBytes: storedSize,
-            durationSeconds: duration
+            durationSeconds: duration,
+            album: album
         )
         tracks.insert(track, at: 0)
         save()
@@ -267,6 +269,12 @@ final class LocalLibraryManager: ObservableObject {
             return artist
         }
         return "This Device"
+    }
+
+    private static func readAlbum(at url: URL) async -> String? {
+        let asset = AVURLAsset(url: url)
+        guard let md = try? await asset.load(.commonMetadata) else { return nil }
+        return md.first(where: { $0.commonKey?.rawValue == "albumName" })?.stringValue
     }
 
     private static func readDuration(at url: URL) async -> Double? {

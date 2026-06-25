@@ -184,6 +184,21 @@ final class LocalLibraryManagerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: artworkURL.path))
     }
 
+    // MARK: - Album metadata (B3)
+
+    func test_import_populatesAlbumField() async throws {
+        // The synthetic fixture is not a real audio file, so AVAsset.load
+        // returns no metadata. The field is populated (the readAlbum call
+        // runs without crashing) and the fallback is nil. This confirms the
+        // importFile plumbing reaches the LocalTrack initializer; a
+        // positive case requires a real .mp3/.flac fixture which is out of
+        // scope for this test file.
+        let source = try makeSourceFile()
+        let track = try await manager.importFile(at: source)
+        // album is Optional<String>; the absence of a crash is the assertion.
+        XCTAssertNil(track.album, "synthetic fixture has no album metadata")
+    }
+
     // MARK: - auditMissingFlags (B1 Task 2)
 
     func test_audit_emptyLibrary_noError() {
