@@ -351,4 +351,39 @@ final class LocalLibraryManagerTests: XCTestCase {
         XCTAssertEqual(filesAfter.count, filesBefore.count, "no file should have been copied into the library directory")
         XCTAssertTrue(manager.tracks.isEmpty, "no track should have been added to the library")
     }
+
+    // MARK: - AtomicFileWriter (B4)
+
+    func test_atomicWrite_noTempOnSuccess() throws {
+        let target = tmpDir.appendingPathComponent("payload_\(UUID().uuidString).bin")
+        let payload = Data(repeating: 0x42, count: 256)
+        try AtomicFileWriter.writeAtomically(payload, to: target)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: target.path),
+                      "target file should exist after a successful write")
+        XCTAssertEqual(try Data(contentsOf: target), payload,
+                       "written bytes should match the input")
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: target.appendingPathExtension("tmp").path),
+            "no .tmp file should be left alongside a successful write"
+        )
+    }
+
+    func test_atomicWrite_rollsBackOnFailure() throws {
+        // `libraryDir` is a directory (set up in setUp). moveItem cannot replace
+        // a directory with a file, so the rename step must fail. The wrapper
+        // must remove the .tmp it created before rethrowing.
+        let tempSibling = libraryDir.appendingPathExtension("tmp")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempSibling.path),
+                       "precondition: no leftover .tmp from a prior run")
+
+        XCTAssertThrowsError(
+            try AtomicFileWriter.writeAtomically(Data(repeating: 0x42, count: 256), to: libraryDir)
+        )
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempSibling.path),
+                       "the .tmp file must be removed when the rename fails")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: libraryDir.path),
+                      "the original directory must be untouched")
+    }
 }
