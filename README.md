@@ -98,8 +98,8 @@ the rest of the suite (`EQController`, `EqualizerState`, `Debouncer`,
 1. `Bundle.main.object(forInfoDictionaryKey: "ARIA_BACKEND_URL")` — set
    the `ARIA_BACKEND_URL` key in `Aria---Music-Browser-Info.plist` (or
    a build-config override) to point at your backend.
-2. **DEBUG build** — falls back to the homelab Tailscale URL (see
-   "Dev homelab setup" below).
+2. **DEBUG build** — falls back to the dev-backend URL, built from
+   `ARIA_HOMELAB_HOST` in Info.plist (see "Dev homelab setup" below).
 3. **Release build** — falls back to the public Render URL
    `https://aria-backend-px9s.onrender.com`.
 
@@ -113,25 +113,35 @@ RFC 5737 TEST-NET-1 placeholder `192.0.2.1`** (reserved for
 documentation, URL-safe, never routable). The `192.0.2.1` placeholder
 appears in 6 places:
 
-- `Aria---Music-Browser-Info.plist` (ATS exception key)
+- `Aria---Music-Browser-Info.plist` (ATS exception key + the
+  `ARIA_HOMELAB_HOST` value)
 - `Managers/PlayerManager.swift` (DEBUG `backendURL` fallback)
 - `Services/TLSPinningDelegate.swift` (doc comment + hostname gate)
 - `Tests/YouTubeSearchServiceTests.swift`
 - `Tests/TLSPinningDelegateTests.swift` (3 sites)
 
-To use the dev backend, replace every occurrence of `192.0.2.1` in
-the source (a project-wide grep will find them) with your actual
-Tailscale IP, then:
+**The single override you need: set `ARIA_HOMELAB_HOST` in
+`Aria---Music-Browser-Info.plist` (or via a User-Defined build
+setting that flows into Info.plist) to your actual Tailscale IP.**
+Both the `PlayerManager.backendURL` and the `TLSPinningDelegate`
+hostname gate resolve from this one key. The Info.plist ATS exception
+key for `192.0.2.1` becomes a no-op once the URL is overridden; the
+existing `NSAllowsLocalNetworking = true` covers any Tailscale IP.
+
+The 2 live integration tests
+(`test_LiveSearchReachesHomelab`,
+`test_LivePinningToHomelabBackend`) skip when `ARIA_HOMELAB_HOST` is
+the placeholder — they need a real reachable host to exercise the
+full URLSession → TLS → pin path. Once you set the key, the tests
+will run.
+
+To use the dev backend, after setting the key:
 
 1. Run the backend on `<your-ip>:8000` (HTTP) and `<your-ip>:8443`
    (HTTPS, with a self-signed cert if you want the
    `TLSPinningDelegate` path to fire).
 2. The `TLSPinningDelegate` only pins the dev host in DEBUG; in
    Release it accepts public-CA certificates without pinning.
-
-The `Services/TLSPinningDelegate.swift` hostname gate is keyed on
-`192.0.2.1`, so it won't accidentally pin an arbitrary self-signed
-host on the open internet.
 
 ### ATS / TLS
 
@@ -221,8 +231,22 @@ placeholder configuration by design.
 
 ## License
 
-No license file is included. Add one (e.g. MIT, Apache-2.0) before
-publishing widely or accepting outside contributions.
+MIT — see `LICENSE`.
+
+## Sample data (optional, for first-run friendliness)
+
+The `LocalLibraryManager.sampleData/` directory in the repo is a
+**gitignored template** for sample audio files. The app checks a
+runtime location (`Documents/AriaLibrary.sampleData/` in the app
+sandbox) on every launch and imports any audio files it finds that
+aren't already in the library. See
+`LocalLibraryManager.sampleData/README.md` for the import workflow
+(simulator + device paths, how to copy files in, gitignore rationale).
+
+The directory is intentionally empty in the repo — drop your own
+sample `.mp3` / `.flac` / etc. files in there locally for testing.
+Audio files are gitignored so the repo doesn't bloat and so you
+don't accidentally commit licensed content.
 
 ## Project memory
 
