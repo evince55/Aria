@@ -105,6 +105,8 @@ struct FullScreenPlayerView: View {
                 addToPlaylistSheet
             case .queue:
                 QueueView()
+            case .missingTrackRepair:
+                EmptyView()
             }
         }
     }

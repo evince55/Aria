@@ -251,4 +251,25 @@ final class LocalLibraryManagerTests: XCTestCase {
         XCTAssertEqual(decoded.album, "Greatest Hits")
         XCTAssertTrue(decoded.isMissing)
     }
+
+    // MARK: - repairMissing (B1 Task 6)
+
+    func test_repairMissing_replacesFileAndClearsFlag() async throws {
+        let source = try makeSourceFile(data: Data(repeating: 0, count: 100), ext: "mp3")
+        _ = try await manager.importFile(at: source)
+        let original = manager.tracks[0]
+        XCTAssertFalse(original.isMissing)
+
+        let libraryFile = manager.fileURL(for: original)
+        try FileManager.default.removeItem(at: libraryFile)
+        manager.auditMissingFlags()
+        XCTAssertTrue(manager.tracks[0].isMissing)
+
+        let newSource = try makeSourceFile(data: Data(repeating: 0, count: 200), ext: "mp3")
+        let repaired = try manager.repairMissing(trackID: original.id, newFileURL: newSource)
+        XCTAssertFalse(repaired.isMissing)
+        XCTAssertEqual(repaired.id, original.id, "repair preserves identity")
+        XCTAssertGreaterThan(repaired.fileSizeBytes, 0)
+        XCTAssertNotEqual(repaired.fileName, original.fileName, "repair generates a new on-disk file")
+    }
 }

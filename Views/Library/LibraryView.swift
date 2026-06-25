@@ -6,6 +6,7 @@ struct LibraryView: View {
     @EnvironmentObject private var playerManager: PlayerManager
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var playlistsManager: PlaylistsManager
+    @EnvironmentObject private var nav: NavigationCoordinator
 
     @State private var isImporting = false
     @State private var importError: String?
@@ -69,6 +70,17 @@ struct LibraryView: View {
         }
         .sheet(item: $addToPlaylistTrack) { track in
             addToPlaylistSheet(for: track)
+        }
+        .sheet(item: $nav.missingRepairTrack) { track in
+            MissingTrackRepairSheet(
+                track: track,
+                onReimport: { url in
+                    _ = try? libraryManager.repairMissing(trackID: track.id, newFileURL: url)
+                },
+                onRemove: {
+                    libraryManager.remove(track)
+                }
+            )
         }
         .onAppear {
             libraryManager.auditMissingFlags()
@@ -172,7 +184,11 @@ struct LibraryView: View {
                     }
                     .contextMenu {
                         Button {
-                            playTrack(track)
+                            if track.isMissing {
+                                nav.missingRepairTrack = track
+                            } else {
+                                playTrack(track)
+                            }
                         } label: {
                             Label("Play", systemImage: "play.fill")
                         }
@@ -198,7 +214,11 @@ struct LibraryView: View {
 
     private func trackRow(_ track: LocalTrack) -> some View {
         Button {
-            playTrack(track)
+            if track.isMissing {
+                nav.missingRepairTrack = track
+            } else {
+                playTrack(track)
+            }
         } label: {
             HStack(spacing: 12) {
                 artworkView(for: track)
@@ -206,10 +226,18 @@ struct LibraryView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(track.title)
-                        .font(.body)
-                        .foregroundColor(tokens.textPrimary)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(track.title)
+                            .font(.body)
+                            .foregroundColor(tokens.textPrimary)
+                            .lineLimit(1)
+                        if track.isMissing {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                                .imageScale(.small)
+                                .accessibilityLabel("File missing")
+                        }
+                    }
                     if let artist = track.artist {
                         Text(artist)
                             .font(.caption)
@@ -236,6 +264,7 @@ struct LibraryView: View {
             }
         }
         .buttonStyle(.plain)
+        .opacity(track.isMissing ? 0.55 : 1.0)
     }
 
     @ViewBuilder

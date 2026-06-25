@@ -88,6 +88,49 @@ final class LocalLibraryManager: ObservableObject {
         save()
     }
 
+    /// Replaces a missing track's on-disk file with a new one the user
+    /// just picked, keeping the track's identity (id) so playlist /
+    /// recently-played references stay valid. The new file is copied
+    /// into the library directory under a fresh on-disk name; the
+    /// `fileName` field is updated to match.
+    func repairMissing(trackID: UUID, newFileURL: URL) throws -> LocalTrack {
+        guard let idx = tracks.firstIndex(where: { $0.id == trackID }) else {
+            throw NSError(domain: "AriaLibrary", code: 404, userInfo: [NSLocalizedDescriptionKey: "Track not found"])
+        }
+        let old = tracks[idx]
+
+        let oldFileURL = fileURL(for: old)
+        if fileManager.fileExists(atPath: oldFileURL.path) {
+            try? fileManager.removeItem(at: oldFileURL)
+        }
+        if let art = old.artworkURL, fileManager.fileExists(atPath: art.path) {
+            try? fileManager.removeItem(at: art)
+        }
+
+        let newDiskID = UUID()
+        let ext = newFileURL.pathExtension.isEmpty ? "mp3" : newFileURL.pathExtension
+        let newFileName = "\(newDiskID.uuidString).\(ext)"
+        let newFile = libraryDirectory.appendingPathComponent(newFileName)
+        try? fileManager.removeItem(at: newFile)
+        try fileManager.copyItem(at: newFileURL, to: newFile)
+
+        let repaired = LocalTrack(
+            id: old.id,
+            title: newFileURL.deletingPathExtension().lastPathComponent,
+            artist: old.artist,
+            artworkURL: nil,
+            fileName: newFileName,
+            importedAt: Date(),
+            fileSizeBytes: (try? fileManager.attributesOfItem(atPath: newFile.path)[.size] as? Int64) ?? 0,
+            durationSeconds: old.durationSeconds,
+            isMissing: false
+        )
+
+        tracks[idx] = repaired
+        save()
+        return repaired
+    }
+
     /// Reconstructs the absolute file URL for a track. The file is
     /// guaranteed to exist in `libraryDirectory` while the track is in
     /// the list; callers should not retain the URL beyond the track's

@@ -4,12 +4,20 @@ import SwiftUI
 
 /// The set of modal sheets the app can present. Identifiable so it can be
 /// driven by SwiftUI's `.sheet(item:)` modifier.
-enum AppSheet: String, Identifiable {
+enum AppSheet: Identifiable {
     case equalizer
     case addToPlaylist
     case queue
+    case missingTrackRepair(trackID: UUID)
 
-    var id: String { rawValue }
+    var id: String {
+        switch self {
+        case .equalizer: return "equalizer"
+        case .addToPlaylist: return "addToPlaylist"
+        case .queue: return "queue"
+        case .missingTrackRepair(let trackID): return "missingTrackRepair:\(trackID.uuidString)"
+        }
+    }
 }
 
 /// Single source of truth for what modal sheet the player is currently
@@ -26,4 +34,5 @@ enum AppSheet: String, Identifiable {
 @MainActor
 final class NavigationCoordinator: ObservableObject {
     @Published var presentedSheet: AppSheet?
+    @Published var missingRepairTrack: LocalTrack?
 }
