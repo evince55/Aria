@@ -65,7 +65,59 @@ final class LibraryViewModel: ObservableObject {
         library.$tracks.assign(to: &$tracks)
     }
 
-    var filteredAndSortedTracks: [LocalTrack] { tracks }
+    var filteredAndSortedTracks: [LocalTrack] {
+        let filtered: [LocalTrack]
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if query.isEmpty {
+            filtered = tracks
+        } else {
+            filtered = tracks.filter { track in
+                track.title.range(of: query, options: .caseInsensitive) != nil
+                    || (track.artist?.range(of: query, options: .caseInsensitive) != nil)
+            }
+        }
+        return sort(filtered, by: sortOrder)
+    }
 
     var sections: [LibrarySection] { [] }
+
+    private func sort(_ tracks: [LocalTrack], by order: LibrarySortOrder) -> [LocalTrack] {
+        switch order {
+        case .recentlyAdded:
+            return tracks.sorted { $0.importedAt > $1.importedAt }
+        case .title:
+            return tracks.sorted { lhs, rhs in
+                let c = lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+                return c == .orderedAscending
+            }
+        case .artist:
+            return tracks.sorted { lhs, rhs in
+                switch (lhs.artist, rhs.artist) {
+                case (nil, nil):
+                    return false
+                case (nil, _):
+                    return false
+                case (_, nil):
+                    return true
+                case (let l?, let r?):
+                    return l.localizedCaseInsensitiveCompare(r) == .orderedAscending
+                }
+            }
+        case .duration:
+            return tracks.sorted { lhs, rhs in
+                switch (lhs.durationSeconds, rhs.durationSeconds) {
+                case (nil, nil):
+                    return false
+                case (nil, _):
+                    return false
+                case (_, nil):
+                    return true
+                case (let l?, let r?):
+                    return l < r
+                }
+            }
+        case .fileSize:
+            return tracks.sorted { $0.fileSizeBytes > $1.fileSizeBytes }
+        }
+    }
 }
