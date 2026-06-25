@@ -14,7 +14,7 @@ private extension Data {
 }
 
 /// URLSessionDelegate that pins a bundled self-signed cert to bypass the
-/// system TLS trust check for the local-dev backend on `100.76.103.1:8443`.
+/// system TLS trust check for the local-dev backend on `192.0.2.1:8443`.
 ///
 /// In Release builds, no pinning is performed — public CA-signed certs (Render,
 /// Google) work normally. In Debug builds, the bundled `cert.der` is loaded
@@ -95,7 +95,7 @@ final class TLSPinningDelegate: NSObject, URLSessionDelegate {
 
         // 2) Hostname gate. Pin only fires for the dev backend, never for
         // arbitrary self-signed hosts on the open internet.
-        guard host == "100.76.103.1" else {
+        guard host == "192.0.2.1" else {
             log.error("DEBUG-DIAG system trust failed and host=\(host, privacy: .public) is not pinned: cancelling")
             completionHandler(.cancelAuthenticationChallenge, nil)
             return

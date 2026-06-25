@@ -10,7 +10,7 @@ final class YouTubeSearchServiceTests: XCTestCase {
     /// (run `xcrun simctl keychain <udid> add-root-cert /path/to/rootCA.pem`).
     /// Without it, the self-signed cert is rejected at the system level.
     func test_LiveSearchReachesHomelab() async throws {
-        let service = YouTubeSearchService(backendURL: "http://100.76.103.1:8000")
+        let service = YouTubeSearchService(backendURL: "http://192.0.2.1:8000")
         do {
             let tracks = try await service.search(query: "est gee")
             XCTAssertFalse(tracks.isEmpty, "Expected search results, got 0")

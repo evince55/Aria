@@ -34,7 +34,7 @@ final class TLSPinningDelegateTests: XCTestCase {
             SecTrustEvaluate(trust, &result)
         }
         let space = URLProtectionSpace(
-            host: "100.76.103.1",
+            host: "192.0.2.1",
             port: 8443,
             protocol: "https",
             realm: nil,
@@ -140,7 +140,7 @@ final class TLSPinningDelegateTests: XCTestCase {
 
     /// Verifies the pinning delegate works end-to-end against the real
     /// homelab backend. Requires:
-    /// 1. chai-homelab reachable on Tailscale at 100.76.103.1:8443
+    /// 1. chai-homelab reachable on Tailscale at 192.0.2.1:8443
     /// 2. cert.der bundled in the test app (Debug builds only)
     /// 3. ATS `NSAllowsArbitraryLoads` set (already is)
     ///
@@ -169,7 +169,7 @@ final class TLSPinningDelegateTests: XCTestCase {
         // Debug builds use plain HTTP (Tailscale handles encryption).
         // The TLSPinningDelegate still does its job — it just sees an
         // HTTP challenge instead of a TLS one and passes through.
-        let url = URL(string: "http://100.76.103.1:8000/api/play?video_id=OA8aw07dpg0")!
+        let url = URL(string: "http://192.0.2.1:8000/api/play?video_id=OA8aw07dpg0")!
         do {
             let (data, response) = try await session.data(from: url)
             let http = response as? HTTPURLResponse

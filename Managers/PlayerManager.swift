@@ -60,7 +60,7 @@ final class PlayerManager: NSObject, ObservableObject {
         // so plain HTTP is fine for local dev. HTTPS was attempted but
         // requires a system-trusted CA on the device, which is impractical
         // to install on a real iPhone for a dev-only backend.
-        return "http://100.76.103.1:8000"
+        return "http://192.0.2.1:8000"
         #else
         return "https://aria-backend-px9s.onrender.com"
         #endif
