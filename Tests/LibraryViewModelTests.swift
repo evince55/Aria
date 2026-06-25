@@ -167,4 +167,44 @@ final class LibraryViewModelTests: XCTestCase {
         let unknown = vm.sections.first { $0.title == "Unknown" }
         XCTAssertEqual(unknown?.tracks.map(\.title), ["B1"])
     }
+
+    // MARK: - Persistence (init from UserDefaults via view) + empty state
+
+    func test_persistedSortOrder_restoresOnInit() {
+        let suite = UserDefaults(suiteName: "library-vm-test-\(UUID().uuidString)")!
+        suite.set(LibrarySortOrder.title.rawValue, forKey: "librarySortOrder")
+        suite.set(LibraryGroupBy.album.rawValue, forKey: "libraryGroupBy")
+
+        // Simulate the view reading @AppStorage in its own init and
+        // passing the decoded values into the VM.
+        let initialSort = LibrarySortOrder(
+            rawValue: suite.string(forKey: "librarySortOrder") ?? ""
+        ) ?? .recentlyAdded
+        let initialGroup = LibraryGroupBy(
+            rawValue: suite.string(forKey: "libraryGroupBy") ?? ""
+        ) ?? .none
+
+        let vm = LibraryViewModel(
+            library: makeLibrary(),
+            initialSortOrder: initialSort,
+            initialGroupBy: initialGroup
+        )
+        XCTAssertEqual(vm.sortOrder, .title,
+                       "VM should reflect the persisted sort order passed in by the view")
+        XCTAssertEqual(vm.groupBy, .album,
+                       "VM should reflect the persisted group-by passed in by the view")
+    }
+
+    func test_filteredResult_emptyShowsEmptyState() {
+        let library = makeLibrary(tracks: [
+            makeTrack(title: "Foo"),
+            makeTrack(title: "Bar"),
+        ])
+        let vm = LibraryViewModel(library: library)
+        vm.searchText = "no such track"
+        XCTAssertTrue(vm.filteredAndSortedTracks.isEmpty,
+                       "a search with no matches yields an empty filtered list — the view should render its empty state")
+        XCTAssertTrue(vm.sections.allSatisfy { $0.tracks.isEmpty },
+                       "no sections should hold any tracks when the filter is empty")
+    }
 }

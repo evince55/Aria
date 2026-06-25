@@ -13,6 +13,9 @@ struct LibraryView: View {
     @State private var importingTrackIDs: Set<UUID> = []
     @State private var addToPlaylistTrack: LocalTrack?
 
+    @AppStorage("librarySortOrder") private var sortOrderRaw: String = LibrarySortOrder.recentlyAdded.rawValue
+    @AppStorage("libraryGroupBy") private var groupByRaw: String = LibraryGroupBy.none.rawValue
+
     private var tokens: DesignTokens { themeManager.tokens }
 
     var body: some View {
