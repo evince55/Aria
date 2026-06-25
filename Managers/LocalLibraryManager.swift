@@ -261,15 +261,23 @@ final class LocalLibraryManager: ObservableObject {
 
     private static func readArtist(at url: URL) async -> String? {
         let asset = AVURLAsset(url: url)
-        guard let md = try? await asset.load(.commonMetadata) else { return nil }
-        return md.first(where: { $0.commonKey?.rawValue == "artist" })?.stringValue
+        if let md = try? await asset.load(.commonMetadata),
+           let artist = md.first(where: { $0.commonKey?.rawValue == "artist" })?.stringValue,
+           !artist.isEmpty {
+            return artist
+        }
+        return "This Device"
     }
 
     private static func readDuration(at url: URL) async -> Double? {
         let asset = AVURLAsset(url: url)
-        guard let duration = try? await asset.load(.duration) else { return nil }
-        let seconds = duration.seconds
-        return seconds.isFinite ? seconds : nil
+        if let duration = try? await asset.load(.duration) {
+            let seconds = duration.seconds
+            if seconds.isFinite && seconds > 0 {
+                return seconds
+            }
+        }
+        return 0
     }
 
     /// Extracts embedded artwork (ID3 APIC for MP3, PICTURE for FLAC,

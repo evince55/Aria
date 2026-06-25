@@ -498,4 +498,22 @@ final class LocalLibraryManagerTests: XCTestCase {
         XCTAssertTrue(cloudManager.tracks.isEmpty,
                       "no track should be added when the file is an un-downloaded cloud file")
     }
+
+    // MARK: - Metadata fallbacks (B4)
+
+    func test_import_metadataFailure_usesFilenameFallback() async throws {
+        // 1024 bytes of 0x00 with a .mp3 extension: not a valid audio stream,
+        // so AVAsset.load(.commonMetadata) and .duration both fail.
+        let url = try makeSourceFile(data: Data(repeating: 0x00, count: 1024), ext: "mp3")
+        let track = try await manager.importFile(at: url)
+
+        XCTAssertEqual(track.title, url.deletingPathExtension().lastPathComponent,
+                       "title should fall back to the filename when metadata extraction fails")
+        XCTAssertNotNil(track.artist, "artist should never be nil after import — the B4 fallback is \"This Device\"")
+        XCTAssertEqual(track.artist, "This Device",
+                       "artist should fall back to \"This Device\" when metadata extraction fails")
+        XCTAssertNotNil(track.durationSeconds, "duration should never be nil after import — the B4 fallback is 0")
+        XCTAssertEqual(track.durationSeconds, 0,
+                       "duration should fall back to 0 when metadata extraction fails")
+    }
 }
