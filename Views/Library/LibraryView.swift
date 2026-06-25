@@ -70,6 +70,9 @@ struct LibraryView: View {
         .sheet(item: $addToPlaylistTrack) { track in
             addToPlaylistSheet(for: track)
         }
+        .onAppear {
+            libraryManager.auditMissingFlags()
+        }
     }
 
     @ViewBuilder

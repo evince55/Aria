@@ -31,6 +31,7 @@ final class LocalLibraryManager: ObservableObject {
         self.saveDebouncer = Debouncer(delay: 0.5) { [weak self] in self?.performSave() }
         try? fileManager.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
         load()
+        auditMissingFlags()
     }
 
     /// Flush any pending debounced save. Call from scenePhase
