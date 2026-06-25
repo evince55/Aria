@@ -10,6 +10,13 @@ final class PlayerManager: NSObject, ObservableObject {
     // MARK: - Published state
 
     @Published var currentTrack: Track?
+    /// Resolved artwork URL for the current track — either the YouTube
+    /// thumbnail (for streamed tracks) or the extracted embedded
+    /// artwork file (for local imports). `nil` when no artwork is
+    /// available. The view layer uses this instead of
+    /// `currentTrack.thumbnailURL` so local files can show their
+    /// embedded artwork without going through `Track`.
+    @Published private(set) var currentArtworkURL: URL?
     @Published var isPlaying = false
     @Published var playbackState: PlaybackState = .idle
     @Published var currentTime: TimeInterval = 0
@@ -20,12 +27,17 @@ final class PlayerManager: NSObject, ObservableObject {
 
     let eq: EQController
 
-    enum PlaybackState: Int {
-        case idle = -1
-        case loading = 3
-        case playing = 1
-        case paused = 2
-        case ended = 0
+    enum PlaybackState: Equatable {
+        case idle
+        case loading
+        case playing
+        case paused
+        case ended
+        /// Engine path is downloading the source stream to `EQCache`
+        /// before the first buffer can be scheduled. `progress` is in
+        /// `0.0...1.0`; an indeterminate download (no `Content-Length`
+        /// from the server) reports `0` until completion.
+        case preparingDownload(progress: Double)
     }
 
     enum RepeatMode: Int, CaseIterable {
@@ -76,7 +88,7 @@ final class PlayerManager: NSObject, ObservableObject {
     private var pendingEngineSwitch = false
     var currentStreamURL: URL?
     private var downloadedFileURL: URL?
-    private var downloadTask: URLSessionDataTaskProtocol?
+    private var downloadTask: Task<Void, Never>?
     private var isStartingEngine = false
     var playGeneration = 0
 
@@ -197,12 +209,31 @@ final class PlayerManager: NSObject, ObservableObject {
     }
 
     func play(_ track: Track) {
+        if let localURL = track.localFileURL {
+            playLocal(track: track, fileURL: localURL)
+        } else {
+            playStreamed(track: track)
+        }
+    }
+
+    /// Convenience: starts playback of a library entry. Equivalent to
+    /// `play(track.asPlayerTrack(fileURL:))` but keeps the call site
+    /// explicit about which file is being played.
+    func play(localTrack: LocalTrack, fileURL: URL) {
+        let track = localTrack.asPlayerTrack(fileURL: fileURL)
+        play(track)
+    }
+
+    // MARK: - Playback paths
+
+    private func playStreamed(track: Track) {
         playGeneration += 1
         let gen = playGeneration
         log.notice("play track=\(track.id, privacy: .public) gen=\(gen) prevPlayerAlive=\(self.avPlayerPath?.avPlayer != nil, privacy: .public) prevUsingEngine=\(self.isUsingEngine, privacy: .public)")
         nowPlaying.activateAudioSession()
 
         currentTrack = track
+        currentArtworkURL = track.thumbnailURL
         isPlaying = true
         playbackState = .loading
         currentTime = 0
@@ -211,6 +242,35 @@ final class PlayerManager: NSObject, ObservableObject {
         nowPlaying.updateNowPlaying()
         nowPlaying.loadArtwork(for: track)
         fetchStreamURL(for: track.id, generation: gen)
+    }
+
+    /// Plays a local file. Honors the current EQ setting: EQ on routes
+    /// through the engine path (no download needed), EQ off goes
+    /// straight to the AVPlayer path.
+    private func playLocal(track: Track, fileURL: URL) {
+        playGeneration += 1
+        let gen = playGeneration
+        log.notice("play local track=\(track.id, privacy: .public) gen=\(gen) eq=\(self.eq.isEnabled, privacy: .public) hasArtwork=\(track.thumbnailURL != nil, privacy: .public)")
+        _ = gen  // reserved for future generation-based cancellation
+        nowPlaying.activateAudioSession()
+
+        currentTrack = track
+        currentArtworkURL = track.thumbnailURL
+        isPlaying = true
+        playbackState = .loading
+        currentTime = 0
+        duration = 0
+        stopAllPlayback()
+        nowPlaying.updateNowPlaying()
+        if let artworkURL = track.thumbnailURL {
+            nowPlaying.loadArtwork(from: artworkURL)
+        }
+        currentStreamURL = fileURL
+        if eq.isEnabled {
+            downloadAndPlayEngine(url: fileURL)
+        } else {
+            playAVPlayer(url: fileURL)
+        }
     }
 
     func togglePlayPause() {
@@ -321,6 +381,18 @@ final class PlayerManager: NSObject, ObservableObject {
             isPlaying = false
             playbackState = .ended
         }
+    }
+
+    /// Replaces the queue with `tracks` and starts playback at
+    /// `tracks[startIndex]`. Used by callers that want to play a
+    /// contiguous slice of a library/playlist (e.g. the Library tab
+    /// when the user taps a track in the middle of the list).
+    func playSlice(_ tracks: [Track], startIndex: Int) {
+        guard !tracks.isEmpty else { return }
+        let idx = max(0, min(startIndex, tracks.count - 1))
+        let upcoming = Array(tracks.dropFirst(idx + 1))
+        queue = upcoming
+        play(tracks[idx])
     }
 
     /// TODO: Currently a no-op distinction — both branches restart the current
@@ -446,58 +518,56 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private func downloadAndPlayEngine(url: URL) {
         currentStreamURL = url
-        playbackState = .loading
+
+        // Local files (imported via the Library tab) don't need a
+        // download — skip straight to the engine.
+        if url.isFileURL {
+            playbackState = .loading
+            startEngine(with: url)
+            return
+        }
 
         let cacheURL = EQCache.shared.cacheURL(for: url)
         let cached = FileManager.default.fileExists(atPath: cacheURL.path)
         log.notice("downloadAndPlayEngine: cache=\(cached ? "hit" : "miss", privacy: .public) path=\(cacheURL.path, privacy: .public)")
         if cached {
+            playbackState = .loading
             startEngine(with: cacheURL)
             return
         }
 
-        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("aria_eq_\(UUID().uuidString)")
-
+        playbackState = .preparingDownload(progress: 0)
         downloadTask?.cancel()
-        downloadTask = urlSession.dataTask(with: url) { [weak self] data, _, error in
+        let streamURL = url
+        let targetCacheURL = cacheURL
+        downloadTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            if let error = error {
-                log.error("Download error: \(error.localizedDescription, privacy: .public)")
-                DispatchQueue.main.async {
-                    self.downloadTask = nil
-                    self.handleFetchError()
-                }
-                return
-            }
-            guard let data else {
-                DispatchQueue.main.async {
-                    self.downloadTask = nil
-                    self.handleFetchError()
-                }
-                return
-            }
             do {
-                try data.write(to: tempURL)
-                let cacheDir = cacheURL.deletingLastPathComponent()
+                let downloadedURL = try await self.urlSession.downloadWithProgress(
+                    from: streamURL,
+                    onProgress: { progress in
+                        Task { @MainActor [weak self] in
+                            self?.playbackState = .preparingDownload(progress: progress)
+                        }
+                    }
+                )
+                let cacheDir = targetCacheURL.deletingLastPathComponent()
                 try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-                if FileManager.default.fileExists(atPath: cacheURL.path) {
-                    try FileManager.default.removeItem(at: cacheURL)
+                if FileManager.default.fileExists(atPath: targetCacheURL.path) {
+                    try FileManager.default.removeItem(at: targetCacheURL)
                 }
-                try FileManager.default.moveItem(at: tempURL, to: cacheURL)
-                DispatchQueue.main.async {
-                    self.downloadTask = nil
-                    self.startEngine(with: cacheURL)
-                }
+                try FileManager.default.moveItem(at: downloadedURL, to: targetCacheURL)
+                self.startEngine(with: targetCacheURL)
+            } catch is CancellationError {
+                // Newer play()/stop arrived; nothing to do.
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                // URLSession.bytes throws URLError(.cancelled) when the
+                // wrapping Task is cancelled. Treat as a no-op.
             } catch {
-                log.error("Write error: \(error, privacy: .public)")
-                try? FileManager.default.removeItem(at: tempURL)
-                DispatchQueue.main.async {
-                    self.downloadTask = nil
-                    self.playAVPlayer(url: url)
-                }
+                log.error("Download error: \(error.localizedDescription, privacy: .public)")
+                self.playAVPlayer(url: streamURL)
             }
         }
-        downloadTask?.resume()
     }
 
     private func startEngine(with fileURL: URL) {

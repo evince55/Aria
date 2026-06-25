@@ -136,14 +136,14 @@ struct FavoritesView: View {
             playerManager.play(track)
             recentlyPlayedManager.trackPlayed(track)
         } label: {
-            HStack(spacing: DS.Spacing.md) {
+            HStack(spacing: DS.Spacing.sm) {
                 TrackThumbnail(url: track.thumbnailURL, size: 48, cornerRadius: DS.Radius.sm)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
                         .font(DS.Typography.bodyEm)
                         .lineLimit(1)
                         .foregroundColor(playerManager.currentTrack?.id == track.id ? tokens.accent : tokens.textPrimary)
-                    HStack(spacing: 6) {
+                    HStack(spacing: 4) {
                         if playerManager.currentTrack?.id == track.id {
                             NowPlayingIndicator(isPlaying: playerManager.isPlaying, accent: tokens.accent)
                         }

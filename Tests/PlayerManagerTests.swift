@@ -21,6 +21,14 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
     /// Test sets this to control the response. Used by `StreamResolver`.
     var dataFromHandler: ((URL) async throws -> (Data, URLResponse))?
 
+    /// Closure invoked for each `downloadWithProgress(from:onProgress:)`
+    /// call. Test sets this to simulate a download and (optionally)
+    /// report progress values to the engine path.
+    /// - Returns the on-disk URL where the "downloaded" file should live.
+    /// - Reports progress via the supplied closure; the closure is
+    ///   `@Sendable` so the test may invoke it from any context.
+    var downloadHandler: ((URL, @escaping @Sendable (Double) -> Void) async throws -> URL)?
+
     @discardableResult
     func dataTask(
         with url: URL,
@@ -43,6 +51,17 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
             return try await handler(url)
         }
         return (Data(), URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil))
+    }
+
+    func downloadWithProgress(
+        from url: URL,
+        onProgress: @escaping @Sendable (Double) -> Void
+    ) async throws -> URL {
+        recordedRequests.append(RecordedRequest(url: url, completionHandler: { _, _, _ in }))
+        guard let handler = downloadHandler else {
+            throw URLError(.cancelled)
+        }
+        return try await handler(url, onProgress)
     }
 }
 
@@ -260,9 +279,78 @@ final class PlayerManagerTests: XCTestCase {
                 )
             }
         }
+        // Default downloadHandler in MockURLSession returns an empty
+        // temp file; startEngine will then fail to find an audio track
+        // and fall back to AVPlayer. The test only cares that a request
+        // was recorded.
         player.play(makeTrack(id: "abc", title: "A"))
         try? await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertGreaterThan(self.mockSession.recordedRequests.count, 0)
+    }
+
+    func test_PlayWithEQEnabledEntersPreparingDownloadState() async {
+        // When EQ is on and the stream isn't cached, playbackState
+        // must transition through .preparingDownload so the UI can
+        // surface a "preparing" indicator before the first buffer
+        // is scheduled.
+        player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        mockSession.dataFromHandler = { url in
+            (
+                Data(#"{"url":"/api/stream/abc.m4a","cached":false}"#.utf8),
+                HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+        mockSession.downloadHandler = { url, onProgress in
+            onProgress(0.0)
+            onProgress(0.5)
+            // Block briefly so the test can observe the state.
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            onProgress(1.0)
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("mock_download_\(UUID().uuidString)")
+            try Data().write(to: tempURL)
+            return tempURL
+        }
+
+        var states: [PlayerManager.PlaybackState] = []
+        let cancellable = player.$playbackState.sink { states.append($0) }
+        defer { cancellable.cancel() }
+
+        player.play(makeTrack(id: "abc", title: "A"))
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertTrue(
+            states.contains(where: {
+                if case .preparingDownload = $0 { return true }
+                return false
+            }),
+            "expected .preparingDownload to appear in state transitions, got \(states)"
+        )
+    }
+
+    func test_PlayWithEQEnabledCancelledDownloadDoesNotCrash() async {
+        // Sanity: a fast play()→play() sequence should not crash even
+        // if the first download is in flight. The first download task
+        // is cancelled and the closure exits via CancellationError;
+        // the second play() starts a fresh download.
+        player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        mockSession.dataFromHandler = { url in
+            (
+                Data(#"{"url":"/api/stream/abc.m4a","cached":false}"#.utf8),
+                HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
+            )
+        }
+        mockSession.downloadHandler = { _, _ in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            throw URLError(.cancelled)
+        }
+        player.play(makeTrack(id: "abc", title: "A"))
+        // Let the stream resolution + download task start.
+        try? await Task.sleep(nanoseconds: 50_000_000)
+        player.play(makeTrack(id: "def", title: "B"))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        // If we got here without a crash, the test passes.
+        XCTAssertTrue(true)
     }
 
     // MARK: - Lifecycle (2)
@@ -274,6 +362,155 @@ final class PlayerManagerTests: XCTestCase {
     func test_PlaybackStateIdleAtInit() {
         XCTAssertEqual(player.playbackState, .idle)
         XCTAssertFalse(player.isPlaying)
+    }
+
+    // MARK: - Local file playback
+
+    func test_playLocalTrack_setsCurrentTrack() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local_\(UUID().uuidString).mp3")
+        try? Data(repeating: 0, count: 100).write(to: url)
+        let local = LocalTrack(
+            id: UUID(),
+            title: "Local Song",
+            artist: "Local Artist",
+            artworkURL: nil,
+            fileName: url.lastPathComponent,
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        player.play(localTrack: local, fileURL: url)
+
+        XCTAssertEqual(player.currentTrack?.title, "Local Song")
+        XCTAssertEqual(player.currentTrack?.artist, "Local Artist")
+        XCTAssertTrue(player.currentTrack?.id.hasPrefix("local:") ?? false)
+        XCTAssertTrue(player.isPlaying)
+    }
+
+    func test_playLocalTrackWithEQ_skipsBackend() async {
+        player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local_\(UUID().uuidString).mp3")
+        try? Data(repeating: 0, count: 100).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let local = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: "A",
+            artworkURL: nil,
+            fileName: url.lastPathComponent,
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+
+        // Track requests before and after.
+        let before = mockSession.recordedRequests.count
+        player.play(localTrack: local, fileURL: url)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        // No new backend / stream resolution requests should be made
+        // — the local file plays directly through the engine path.
+        XCTAssertEqual(mockSession.recordedRequests.count, before,
+                       "local file playback should not hit the backend")
+    }
+
+    func test_play_trackWithLocalFileURL_routesToLocalPath() async {
+        // A Track with localFileURL set must play through the local
+        // path (no backend fetch) even when called via the public
+        // play(track:) entry point.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("local_\(UUID().uuidString).mp3")
+        try? Data(repeating: 0, count: 100).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let track = Track(
+            id: "local:\(UUID().uuidString)",
+            title: "From Playlist",
+            artist: "Local",
+            thumbnailURL: nil,
+            localFileURL: url
+        )
+        let before = mockSession.recordedRequests.count
+        player.play(track)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(mockSession.recordedRequests.count, before,
+                       "Track with localFileURL should not trigger any network request")
+        XCTAssertEqual(player.currentTrack?.id, track.id)
+        XCTAssertEqual(player.currentStreamURL, url)
+    }
+
+    func test_play_trackWithoutLocalFileURL_stillGoesToBackend() async {
+        // Sanity: a remote Track with no localFileURL still hits the
+        // backend. Refactor must not have changed the streamed path.
+        let json = #"{"url":"/api/stream/abc.m4a","cached":false}"#
+        let data = json.data(using: .utf8)!
+        let response = HTTPURLResponse(url: URL(string: "http://x")!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        mockSession.dataFromHandler = { _ in (data, response) }
+
+        let track = Track(id: "yt-abc", title: "YouTube", artist: "Y", thumbnailURL: nil, localFileURL: nil)
+        player.play(track)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertTrue(mockSession.recordedRequests.contains(where: { $0.url.absoluteString.contains("video_id=yt-abc") }))
+    }
+
+    func test_localTrack_asPlayerTrack_setsLocalFileURL() {
+        let url = URL(fileURLWithPath: "/tmp/foo.mp3")
+        let local = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: "A",
+            artworkURL: nil,
+            fileName: "foo.mp3",
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+        let track = local.asPlayerTrack(fileURL: url)
+        XCTAssertEqual(track.id, "local:\(local.id.uuidString)")
+        XCTAssertEqual(track.title, "T")
+        XCTAssertEqual(track.artist, "A")
+        XCTAssertEqual(track.localFileURL, url)
+        XCTAssertTrue(track.isLocal)
+    }
+
+    func test_localTrack_asPlayerTrack_usesDefaultArtistWhenMissing() {
+        let url = URL(fileURLWithPath: "/tmp/foo.mp3")
+        let local = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: nil,
+            artworkURL: nil,
+            fileName: "foo.mp3",
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+        let track = local.asPlayerTrack(fileURL: url)
+        XCTAssertEqual(track.artist, "This Device")
+    }
+
+    func test_playSlice_startsAtIndexAndQueuesRemainder() {
+        let a = Track(id: "a", title: "A", artist: "x", thumbnailURL: nil, localFileURL: nil)
+        let b = Track(id: "b", title: "B", artist: "x", thumbnailURL: nil, localFileURL: nil)
+        let c = Track(id: "c", title: "C", artist: "x", thumbnailURL: nil, localFileURL: nil)
+        player.playSlice([a, b, c], startIndex: 1)
+        XCTAssertEqual(player.currentTrack?.id, "b")
+        XCTAssertEqual(player.queue.map(\.id), ["c"])
+    }
+
+    func test_playSlice_emptyTracksIsNoOp() {
+        player.playSlice([], startIndex: 0)
+        XCTAssertNil(player.currentTrack)
+    }
+
+    func test_playSlice_startIndexClampedToBounds() {
+        let a = Track(id: "a", title: "A", artist: "x", thumbnailURL: nil, localFileURL: nil)
+        player.playSlice([a], startIndex: 5)
+        XCTAssertEqual(player.currentTrack?.id, "a")
+        XCTAssertTrue(player.queue.isEmpty)
     }
 
     // MARK: - Helpers

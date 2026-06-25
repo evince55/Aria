@@ -5,6 +5,27 @@ struct Track: Identifiable, Codable, Hashable {
     let title: String
     let artist: String
     let thumbnailURL: URL?
+    /// When non-nil, identifies this as a local file (`id` is
+    /// `"local:<UUID>"`) that should be played through the engine
+    /// path from the local library instead of fetched from the
+    /// backend. `thumbnailURL` then holds the extracted artwork.
+    let localFileURL: URL?
+
+    init(
+        id: String,
+        title: String,
+        artist: String,
+        thumbnailURL: URL? = nil,
+        localFileURL: URL? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.artist = artist
+        self.thumbnailURL = thumbnailURL
+        self.localFileURL = localFileURL
+    }
+
+    var isLocal: Bool { localFileURL != nil }
 
     var firstLetter: String {
         let normalized = title

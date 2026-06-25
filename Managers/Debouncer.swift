@@ -20,21 +20,20 @@ final class Debouncer {
     }
 
     func call() {
-        workItem?.cancel()
-        let item = DispatchWorkItem(block: action)
-        workItem = item
-        queue.asyncAfter(deadline: .now() + delay, execute: item)
+        schedule(action)
     }
 
     /// Variant of `call()` that takes the action inline. Useful when the
     /// action's inputs change between calls (e.g., a UI debouncer that
     /// needs to read the current text-field value at flush time).
     func call(_ inlineAction: @escaping () -> Void) {
-        workItem?.cancel()
-        let item = DispatchWorkItem(block: inlineAction)
-        workItem = item
-        queue.asyncAfter(deadline: .now() + delay, execute: item)
+        schedule(inlineAction)
     }
+
+    /// True between `call()` and the moment the scheduled action fires or
+    /// is cancelled. Used by callers that need to suppress reentrant
+    /// updates (e.g., syncing an external value into a debounced editor).
+    var isPending: Bool { workItem != nil }
 
     /// Cancels any pending invocation without firing.
     func cancel() {
@@ -51,5 +50,19 @@ final class Debouncer {
         item.cancel()
         workItem = nil
         action()
+    }
+
+    private func schedule(_ userAction: @escaping () -> Void) {
+        workItem?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            userAction()
+            // If a new call() came in after we were scheduled but before
+            // we ran, that call would have cancelled us and replaced
+            // workItem; our block would not execute. So if we got here,
+            // workItem is still us.
+            self?.workItem = nil
+        }
+        workItem = item
+        queue.asyncAfter(deadline: .now() + delay, execute: item)
     }
 }

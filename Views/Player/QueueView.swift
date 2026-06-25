@@ -97,7 +97,7 @@ struct QueueView: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: DS.Spacing.md) {
+                    HStack(spacing: DS.Spacing.sm) {
                         Text("\(index + 1)")
                             .font(DS.Typography.captionStrong)
                             .foregroundColor(tokens.textSecondary)

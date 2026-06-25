@@ -7,6 +7,7 @@ struct ContentView: View {
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
     @EnvironmentObject private var settingsManager: SettingsManager
     @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var localLibraryManager: LocalLibraryManager
 
     @State private var selectedTab: AppTab
     @State private var showFullPlayer = false
@@ -26,7 +27,7 @@ struct ContentView: View {
                     .frame(maxHeight: .infinity)
 
                 if playerManager.currentTrack != nil {
-                    MiniPlayerView(playerManager: playerManager) {
+                    MiniPlayerView {
                         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                             showFullPlayer = true
                         }
@@ -37,18 +38,11 @@ struct ContentView: View {
             }
 
             if showFullPlayer {
-                FullScreenPlayerView(
-                    playerManager: playerManager,
-                    favoritesManager: favoritesManager,
-                    playlistsManager: playlistsManager,
-                    recentlyPlayedManager: recentlyPlayedManager,
-                    themeManager: themeManager,
-                    onDismiss: {
-                        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-                            showFullPlayer = false
-                        }
+                FullScreenPlayerView(onDismiss: {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+                        showFullPlayer = false
                     }
-                )
+                })
                 .transition(.move(edge: .bottom))
                 .zIndex(100)
             }
@@ -67,6 +61,14 @@ struct ContentView: View {
                 favoritesManager.flushPendingWrites()
                 playlistsManager.flushPendingWrites()
                 recentlyPlayedManager.flushPendingWrites()
+                localLibraryManager.flushPendingWrites()
+            }
+        }
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains("--debug-fake-track")
+                || UserDefaults.standard.bool(forKey: "debug_fake_track") {
+                playerManager.loadDebugFakeTrack()
+                showFullPlayer = true
             }
         }
     }
@@ -77,37 +79,15 @@ struct ContentView: View {
     private var tabContent: some View {
         switch selectedTab {
         case .favorites:
-            FavoritesView(
-                playerManager: playerManager,
-                favoritesManager: favoritesManager,
-                recentlyPlayedManager: recentlyPlayedManager,
-                themeManager: themeManager
-            )
+            FavoritesView()
         case .playlists:
-            PlaylistsView(
-                playerManager: playerManager,
-                playlistsManager: playlistsManager,
-                recentlyPlayedManager: recentlyPlayedManager,
-                favoritesManager: favoritesManager,
-                themeManager: themeManager
-            )
+            PlaylistsView()
+        case .library:
+            LibraryView()
         case .search:
-            SearchView(
-                playerManager: playerManager,
-                recentlyPlayedManager: recentlyPlayedManager,
-                themeManager: themeManager,
-                settingsManager: settingsManager,
-                selectedTab: $selectedTab
-            )
+            SearchView(selectedTab: $selectedTab)
         case .more:
-            MoreView(
-                playerManager: playerManager,
-                settingsManager: settingsManager,
-                favoritesManager: favoritesManager,
-                playlistsManager: playlistsManager,
-                recentlyPlayedManager: recentlyPlayedManager,
-                themeManager: themeManager
-            )
+            MoreView()
         }
     }
 
@@ -117,6 +97,7 @@ struct ContentView: View {
         HStack(spacing: 0) {
             tabBarButton(tab: .favorites, icon: "heart", label: "Favorites")
             tabBarButton(tab: .playlists, icon: "music.note.list", label: "Playlists")
+            tabBarButton(tab: .library, icon: "folder", label: "Library")
             tabBarButton(tab: .search, icon: "magnifyingglass", label: "Search")
             tabBarButton(tab: .more, icon: "ellipsis", label: "More")
         }
@@ -149,5 +130,5 @@ struct ContentView: View {
 }
 
 enum AppTab {
-    case favorites, playlists, search, more
+    case favorites, playlists, library, search, more
 }

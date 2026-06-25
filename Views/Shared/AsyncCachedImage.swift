@@ -45,22 +45,34 @@ struct AsyncCachedImage<Placeholder: View>: View {
         self.placeholder = placeholder
     }
 
+    /// The URLs to try in order, derived from `url`. For YouTube CDN
+    /// URLs this is `[maxresdefault.jpg, hqdefault.jpg]` so we get the
+    /// highest available quality with a guaranteed fallback.
+    private var candidates: [URL] {
+        guard let url else { return [] }
+        let upgraded = YouTubeThumbnailRewriter.upgradedURLs(for: url)
+        return upgraded.isEmpty ? [url] : upgraded
+    }
+
     var body: some View {
-        ZStack {
-            if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .transition(.opacity.animation(.easeIn(duration: 0.18)))
-            } else if didFail {
-                ZStack {
-                    Color.gray.opacity(0.15)
-                    Image(systemName: "photo")
-                        .foregroundColor(.gray.opacity(0.5))
+        GeometryReader { proxy in
+            ZStack {
+                if let image {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                        .transition(.opacity.animation(.easeIn(duration: 0.18)))
+                } else if didFail {
+                    ZStack {
+                        Color.gray.opacity(0.15)
+                        Image(systemName: "photo")
+                            .foregroundColor(.gray.opacity(0.5))
+                    }
+                } else {
+                    placeholder()
                 }
-            } else {
-                placeholder()
             }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .task(id: url) {
@@ -69,20 +81,32 @@ struct AsyncCachedImage<Placeholder: View>: View {
     }
 
     private func load() async {
-        guard let url else { image = nil; return }
-        if let cached = ImageMemoryCache.shared.image(for: url) {
-            image = cached
-            return
-        }
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            guard !Task.isCancelled, let img = UIImage(data: data) else { return }
-            ImageMemoryCache.shared.store(img, for: url)
-            image = img
-        } catch {
-            if !Task.isCancelled {
-                didFail = true
+        let urls = candidates
+        guard !urls.isEmpty else { image = nil; return }
+
+        for candidate in urls {
+            if Task.isCancelled { return }
+            if let cached = ImageMemoryCache.shared.image(for: candidate) {
+                image = cached
+                return
             }
+            do {
+                let (data, response) = try await URLSession.shared.data(from: candidate)
+                if Task.isCancelled { return }
+                if let http = response as? HTTPURLResponse, http.statusCode == 404 {
+                    continue
+                }
+                guard let img = UIImage(data: data) else { return }
+                ImageMemoryCache.shared.store(img, for: candidate)
+                image = img
+                return
+            } catch {
+                continue
+            }
+        }
+
+        if !Task.isCancelled {
+            didFail = true
         }
     }
 }

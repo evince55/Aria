@@ -34,4 +34,22 @@ final class DebouncerTests: XCTestCase {
         wait(for: [exp], timeout: 0.5)
         XCTAssertEqual(fires, 1)
     }
+
+    func testIsPendingTrueDuringWindow() {
+        let d = Debouncer(delay: 0.2) {}
+        XCTAssertFalse(d.isPending, "should not be pending before call()")
+        d.call()
+        XCTAssertTrue(d.isPending, "should be pending immediately after call()")
+        d.cancel()
+        XCTAssertFalse(d.isPending, "should not be pending after cancel()")
+    }
+
+    func testIsPendingFalseAfterFire() {
+        let exp = expectation(description: "fires")
+        let d = Debouncer(delay: 0.05) { exp.fulfill() }
+        d.call()
+        XCTAssertTrue(d.isPending)
+        wait(for: [exp], timeout: 1.0)
+        XCTAssertFalse(d.isPending, "should not be pending after the action fires")
+    }
 }

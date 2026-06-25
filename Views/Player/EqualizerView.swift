@@ -5,8 +5,19 @@ struct EqualizerView: View {
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var eq: EQController
 
-    @State private var localBands: [Float] = Array(repeating: 0, count: 10)
-    @State private var syncDebouncer = Debouncer(delay: 0.4, action: {})
+    @StateObject private var state: EqualizerState
+
+    init() {
+        // The view is bound to the env-injected `EQController`, but
+        // `init()` runs before env objects are available. The throwaway
+        // bands here are immediately replaced on first `onAppear` via
+        // `state.syncFromController(eq)`.
+        _state = StateObject(wrappedValue: EqualizerState(
+            initialBands: Array(repeating: 0, count: 10),
+            debounceDelay: 0.4,
+            onApply: { _ in }
+        ))
+    }
 
     var body: some View {
         NavigationStack {
@@ -25,13 +36,23 @@ struct EqualizerView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .onAppear {
-            localBands = eq.bands
-            syncDebouncer.cancel()
+            // First appear with the real env-injected controller.
+            // The throwaway bands from `init()` are replaced here.
+            state.syncFromController(eq)
+        }
+        .onChange(of: eq.bands) { _ in
+            // External mutation (e.g. another view, future lock-screen
+            // handler, programmatic reset) — pull the new bands into
+            // the draft state. `syncFromController` is a no-op when a
+            // debounce is pending so an in-progress drag is preserved.
+            state.syncFromController(eq)
         }
         .onDisappear {
-            cancelPendingSync()
-            if localBands != eq.bands {
-                playerManager.applyEQPreset(localBands)
+            state.cancelPending()
+            // If the user dismissed mid-drag, push the latest value now
+            // so it isn't lost.
+            if state.localBands != eq.bands {
+                playerManager.applyEQPreset(state.localBands)
             }
         }
     }
@@ -41,7 +62,7 @@ struct EqualizerView: View {
             HStack(spacing: 10) {
                 ForEach(EQPreset.allCases) { preset in
                     Button {
-                        applyPreset(preset)
+                        state.applyPreset(preset.gains)
                     } label: {
                         Text(preset.rawValue)
                             .font(.caption)
@@ -63,16 +84,15 @@ struct EqualizerView: View {
         HStack(alignment: .bottom, spacing: 0) {
             ForEach(0..<10, id: \.self) { i in
                 VStack(spacing: 8) {
-                    Text(String(format: "%.0f", localBands[i]))
+                    Text(String(format: "%.0f", state.localBands[i]))
                         .font(.caption2)
                         .foregroundColor(themeManager.textSecondary)
                         .frame(height: 12)
 
                     Slider(value: Binding<Double>(
-                        get: { Double(localBands[i]) },
+                        get: { Double(state.localBands[i]) },
                         set: { newValue in
-                            localBands[i] = Float(newValue)
-                            scheduleDebouncedSync()
+                            state.setBand(i, to: Float(newValue))
                         }
                     ), in: -12...12, step: 0.5)
                     .tint(themeManager.theme.accentColor)
@@ -95,9 +115,7 @@ struct EqualizerView: View {
 
     private var resetButton: some View {
         Button {
-            cancelPendingSync()
-            localBands = Array(repeating: 0, count: 10)
-            playerManager.resetEQ()
+            state.reset()
         } label: {
             Text("Reset")
                 .font(.body)
@@ -115,29 +133,6 @@ struct EqualizerView: View {
         let freq = PlayerManager.eqFrequencies[index]
         if freq >= 1000 { return String(format: "%.0fk", freq / 1000) }
         return String(format: "%.0f", freq)
-    }
-
-    private func applyPreset(_ preset: EQPreset) {
-        cancelPendingSync()
-        localBands = preset.gains
-        playerManager.applyEQPreset(preset.gains)
-    }
-
-    private func scheduleDebouncedSync() {
-        // Capture `localBands` by reference at flush time so the latest
-        // slider value is what gets applied, not the value at the moment
-        // the debounce was scheduled.
-        let snapshot = localBands
-        syncDebouncer.call {
-            // Re-read in case the view updated between schedule and flush.
-            // EqualizerView is @MainActor, so this closure runs on main.
-            _ = snapshot // already snapshotted; the array is value-typed
-            playerManager.applyEQPreset(snapshot)
-        }
-    }
-
-    private func cancelPendingSync() {
-        syncDebouncer.cancel()
     }
 }
 

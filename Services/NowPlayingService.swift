@@ -50,12 +50,24 @@ final class NowPlayingService {
     }
 
     func loadArtwork(for track: Track) {
+        guard let url = track.thumbnailURL else { return }
+        loadArtwork(from: url)
+    }
+
+    /// Loads artwork from any URL — both remote (https) and local
+    /// (file://). For local files, reads the bytes directly instead
+    /// of going through URLSession.
+    func loadArtwork(from url: URL) {
         artworkTask?.cancel()
         artworkTask = Task { [weak self] in
             guard let self else { return }
-            guard let url = track.thumbnailURL,
-                  let (data, _) = try? await self.urlSession.data(from: url),
-                  let img = UIImage(data: data) else { return }
+            let data: Data?
+            if url.isFileURL {
+                data = try? Data(contentsOf: url)
+            } else {
+                data = (try? await self.urlSession.data(from: url))?.0
+            }
+            guard let data, let img = UIImage(data: data) else { return }
             let art = MPMediaItemArtwork(boundsSize: img.size) { requestedSize in
                 self.downscaled(img, to: requestedSize)
             }
