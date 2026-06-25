@@ -16,14 +16,32 @@ struct LibraryView: View {
     @AppStorage("librarySortOrder") private var sortOrderRaw: String = LibrarySortOrder.recentlyAdded.rawValue
     @AppStorage("libraryGroupBy") private var groupByRaw: String = LibraryGroupBy.none.rawValue
 
+    @StateObject private var vm: LibraryViewModel
+
     private var tokens: DesignTokens { themeManager.tokens }
+
+    init(library: LocalLibraryManager) {
+        let savedSort = UserDefaults.standard.string(forKey: "librarySortOrder")
+            ?? LibrarySortOrder.recentlyAdded.rawValue
+        let savedGroup = UserDefaults.standard.string(forKey: "libraryGroupBy")
+            ?? LibraryGroupBy.none.rawValue
+        let initialSort = LibrarySortOrder(rawValue: savedSort) ?? .recentlyAdded
+        let initialGroup = LibraryGroupBy(rawValue: savedGroup) ?? .none
+        _vm = StateObject(
+            wrappedValue: LibraryViewModel(
+                library: library,
+                initialSortOrder: initialSort,
+                initialGroupBy: initialGroup
+            )
+        )
+    }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 tokens.background.ignoresSafeArea()
 
-                if libraryManager.tracks.isEmpty {
+                if vm.tracks.isEmpty {
                     emptyState
                 } else {
                     trackList
@@ -31,6 +49,13 @@ struct LibraryView: View {
             }
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $vm.searchText, prompt: "Search library")
+            .onChange(of: vm.sortOrder) { newValue in
+                sortOrderRaw = newValue.rawValue
+            }
+            .onChange(of: vm.groupBy) { newValue in
+                groupByRaw = newValue.rawValue
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -38,7 +63,7 @@ struct LibraryView: View {
                     } label: {
                         Image(systemName: "play.fill")
                     }
-                    .disabled(libraryManager.tracks.isEmpty)
+                    .disabled(vm.tracks.isEmpty)
                     .accessibilityLabel("Play all tracks")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -174,123 +199,57 @@ struct LibraryView: View {
 
     private var trackList: some View {
         List {
-            ForEach(libraryManager.tracks) { track in
-                trackRow(track)
-                    .listRowBackground(tokens.cardSurface)
-                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                        Button {
-                            addToPlaylistTrack = track
-                        } label: {
-                            Label("Playlist", systemImage: "text.badge.plus")
-                        }
-                        .tint(tokens.accent)
-                    }
-                    .contextMenu {
-                        Button {
-                            if track.isMissing {
-                                nav.missingRepairTrack = track
-                            } else {
-                                playTrack(track)
-                            }
-                        } label: {
-                            Label("Play", systemImage: "play.fill")
-                        }
-                        Button {
-                            addToPlaylistTrack = track
-                        } label: {
-                            Label("Add to Playlist", systemImage: "text.badge.plus")
-                        }
-                        Divider()
-                        Button(role: .destructive) {
-                            libraryManager.remove(track)
-                        } label: {
-                            Label("Delete from Library", systemImage: "trash")
+            ForEach(vm.tracks) { track in
+                LibraryTrackRow(
+                    track: track,
+                    isCurrentTrack: isCurrentTrack(track),
+                    isPlaying: playerManager.isPlaying,
+                    tokens: tokens,
+                    onTap: {
+                        if track.isMissing {
+                            nav.missingRepairTrack = track
+                        } else {
+                            playTrack(track)
                         }
                     }
+                )
+                .listRowBackground(tokens.cardSurface)
+                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    Button {
+                        addToPlaylistTrack = track
+                    } label: {
+                        Label("Playlist", systemImage: "text.badge.plus")
+                    }
+                    .tint(tokens.accent)
+                }
+                .contextMenu {
+                    Button {
+                        if track.isMissing {
+                            nav.missingRepairTrack = track
+                        } else {
+                            playTrack(track)
+                        }
+                    } label: {
+                        Label("Play", systemImage: "play.fill")
+                    }
+                    Button {
+                        addToPlaylistTrack = track
+                    } label: {
+                        Label("Add to Playlist", systemImage: "text.badge.plus")
+                    }
+                    Divider()
+                    Button(role: .destructive) {
+                        libraryManager.remove(track)
+                    } label: {
+                        Label("Delete from Library", systemImage: "trash")
+                    }
+                }
             }
             .onDelete(perform: deleteTracks)
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(tokens.background)
-    }
-
-    private func trackRow(_ track: LocalTrack) -> some View {
-        Button {
-            if track.isMissing {
-                nav.missingRepairTrack = track
-            } else {
-                playTrack(track)
-            }
-        } label: {
-            HStack(spacing: 12) {
-                artworkView(for: track)
-                    .frame(width: 48, height: 48)
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(track.title)
-                            .font(.body)
-                            .foregroundColor(tokens.textPrimary)
-                            .lineLimit(1)
-                        if track.isMissing {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                                .imageScale(.small)
-                                .accessibilityLabel("File missing")
-                        }
-                    }
-                    if let artist = track.artist {
-                        Text(artist)
-                            .font(.caption)
-                            .foregroundColor(tokens.textSecondary)
-                            .lineLimit(1)
-                    }
-                    HStack(spacing: 8) {
-                        Text(formatBytes(track.fileSizeBytes))
-                        if let duration = track.durationSeconds, duration > 0 {
-                            Text("·")
-                            Text(formatDuration(duration))
-                        }
-                    }
-                    .font(.caption2)
-                    .foregroundColor(tokens.textSecondary)
-                }
-
-                Spacer()
-
-                if isCurrentTrack(track) {
-                    Image(systemName: playerManager.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
-                        .foregroundColor(tokens.accent)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .opacity(track.isMissing ? 0.55 : 1.0)
-    }
-
-    @ViewBuilder
-    private func artworkView(for track: LocalTrack) -> some View {
-        if let url = track.artworkURL {
-            // AsyncCachedImage handles in-memory caching so list
-            // scrolling doesn't re-decode the JPEG every redraw.
-            AsyncCachedImage(url: url) {
-                placeholderArtwork
-            }
-        } else {
-            placeholderArtwork
-        }
-    }
-
-    private var placeholderArtwork: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(tokens.dividerColor)
-            Image(systemName: "music.note")
-                .font(.title3)
-                .foregroundColor(tokens.textSecondary)
-        }
     }
 
     // MARK: - Actions
@@ -320,7 +279,7 @@ struct LibraryView: View {
     }
 
     private func deleteTracks(at offsets: IndexSet) {
-        let toRemove = offsets.map { libraryManager.tracks[$0] }
+        let toRemove = offsets.map { vm.tracks[$0] }
         for track in toRemove {
             libraryManager.remove(track)
         }
@@ -330,15 +289,15 @@ struct LibraryView: View {
         // Build the full library as Track objects, then start playback
         // at the tapped track. Subsequent Next/Previous cycles through
         // the library in the same order the user sees in the list.
-        let library = libraryManager.tracks
+        let library = vm.tracks
         let asTracks = library.map { $0.asPlayerTrack(fileURL: libraryManager.fileURL(for: $0)) }
         let idx = library.firstIndex(where: { $0.id == track.id }) ?? 0
         playerManager.playSlice(asTracks, startIndex: idx)
     }
 
     private func playAll() {
-        guard !libraryManager.tracks.isEmpty else { return }
-        let asTracks = libraryManager.tracks.map {
+        guard !vm.tracks.isEmpty else { return }
+        let asTracks = vm.tracks.map {
             $0.asPlayerTrack(fileURL: libraryManager.fileURL(for: $0))
         }
         playerManager.playSlice(asTracks, startIndex: 0)
@@ -346,18 +305,5 @@ struct LibraryView: View {
 
     private func isCurrentTrack(_ track: LocalTrack) -> Bool {
         playerManager.currentTrack?.id == "local:\(track.id.uuidString)"
-    }
-
-    // MARK: - Formatting
-
-    private func formatBytes(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
-    }
-
-    private func formatDuration(_ seconds: Double) -> String {
-        let total = Int(seconds.rounded())
-        let mins = total / 60
-        let secs = total % 60
-        return String(format: "%d:%02d", mins, secs)
     }
 }

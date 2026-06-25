@@ -85,7 +85,7 @@ struct ContentView: View {
         case .playlists:
             PlaylistsView()
         case .library:
-            LibraryView()
+            LibraryView(library: localLibraryManager)
         case .search:
             SearchView(selectedTab: $selectedTab)
         case .more:
