@@ -147,6 +147,22 @@ struct FullScreenPlayerView: View {
                 .multilineTextAlignment(.center)
                 .foregroundColor(themeManager.textPrimary)
 
+            if let local = playerManager.currentLocalTrack {
+                let formatText = local.audioFormat?.displayName
+                let qualityText = local.audioQuality?.pillText
+                if formatText != nil || (qualityText != nil && !(qualityText?.isEmpty ?? true)) {
+                    HStack(spacing: 6) {
+                        if let formatText { Text(formatText) }
+                        if let qualityText, !qualityText.isEmpty {
+                            Text("•").foregroundColor(.secondary)
+                            Text(qualityText)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+            }
+
             Text(track.artist)
                 .font(.body)
                 .foregroundColor(themeManager.textSecondary)
