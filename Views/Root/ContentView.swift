@@ -11,6 +11,7 @@ struct ContentView: View {
 
     @State private var selectedTab: AppTab
     @State private var showFullPlayer = false
+    @State private var errorBanner: String?
     @Environment(\.scenePhase) private var scenePhase
 
     init(initialTab: AppTab = .favorites) {
@@ -45,6 +46,38 @@ struct ContentView: View {
                 })
                 .transition(.move(edge: .bottom))
                 .zIndex(100)
+            }
+        }
+        .overlay(alignment: .top) {
+            if let msg = errorBanner {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.orange)
+                    Text(msg)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.black.opacity(0.85))
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 8)
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(200)
+            }
+        }
+        .onChange(of: playerManager.playerError) { error in
+            guard case .streamFailed(let msg) = error else { return }
+            withAnimation(.spring(response: 0.3)) { errorBanner = msg }
+            Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                withAnimation { errorBanner = nil }
+                playerManager.playerError = nil
             }
         }
         .preferredColorScheme(themeManager.isDarkMode ? .dark : .light)

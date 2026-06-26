@@ -1,17 +1,11 @@
 import Foundation
 
 enum AtomicFileWriter {
-    /// Writes `data` to a `<url>.tmp` file in the same directory, then renames
-    /// it over `url`. The temp file is removed if the rename fails. Atomicity
-    /// is provided by `FileManager.moveItem` (POSIX rename) on the same volume.
+    /// Writes `data` atomically to `url` using a temp-file + rename under the
+    /// hood (via `NSData.write(options:.atomic)`). This correctly overwrites an
+    /// existing file, unlike `FileManager.moveItem` which throws when the
+    /// destination already exists.
     static func writeAtomically(_ data: Data, to url: URL) throws {
-        let tempURL = url.appendingPathExtension("tmp")
-        do {
-            try data.write(to: tempURL)
-            try FileManager.default.moveItem(at: tempURL, to: url)
-        } catch {
-            try? FileManager.default.removeItem(at: tempURL)
-            throw error
-        }
+        try data.write(to: url, options: .atomic)
     }
 }

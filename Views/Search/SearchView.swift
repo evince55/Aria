@@ -176,9 +176,10 @@ struct SearchView: View {
                     SectionLabel(title: "Based on your listening", tokens: tokens)
                         .padding(.horizontal, DS.Spacing.lg)
 
+                    let recentSlice = Array(recentlyPlayedManager.recentlyPlayed.prefix(8))
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.md), count: 2), spacing: DS.Spacing.md) {
-                        ForEach(recentlyPlayedManager.recentlyPlayed.prefix(8)) { track in
-                            trackCard(track)
+                        ForEach(recentSlice) { track in
+                            trackCard(track, sourceList: recentSlice)
                         }
                     }
                     .padding(.horizontal, DS.Spacing.lg)
@@ -205,9 +206,10 @@ struct SearchView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DS.Spacing.lg)
             } else {
+                let trendingSlice = Array(recentlyPlayedManager.recentlyPlayed.prefix(20))
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.md), count: 3), spacing: DS.Spacing.md) {
-                    ForEach(recentlyPlayedManager.recentlyPlayed.prefix(20)) { track in
-                        tileCard(track)
+                    ForEach(trendingSlice) { track in
+                        tileCard(track, sourceList: trendingSlice)
                     }
                 }
                 .padding(.horizontal, DS.Spacing.lg)
@@ -235,7 +237,8 @@ struct SearchView: View {
                     let isCurrent = playerManager.currentTrack?.id == track.id
                     Button {
                         Haptics.light()
-                        playerManager.play(track)
+                        let idx = tracks.firstIndex(where: { $0.id == track.id }) ?? 0
+                        playerManager.playSlice(tracks, startIndex: idx)
                         recentlyPlayedManager.trackPlayed(track)
                         selectedTab = .favorites
                     } label: {
@@ -330,10 +333,11 @@ struct SearchView: View {
 
     // MARK: - Track Cards
 
-    private func trackCard(_ track: Track) -> some View {
+    private func trackCard(_ track: Track, sourceList: [Track]) -> some View {
         Button {
             Haptics.light()
-            playerManager.play(track)
+            let idx = sourceList.firstIndex(where: { $0.id == track.id }) ?? 0
+            playerManager.playSlice(sourceList, startIndex: idx)
             recentlyPlayedManager.trackPlayed(track)
             selectedTab = .favorites
         } label: {
@@ -362,10 +366,11 @@ struct SearchView: View {
         .addToQueueGesture(playerManager: playerManager, track: track)
     }
 
-    private func tileCard(_ track: Track) -> some View {
+    private func tileCard(_ track: Track, sourceList: [Track]) -> some View {
         Button {
             Haptics.light()
-            playerManager.play(track)
+            let idx = sourceList.firstIndex(where: { $0.id == track.id }) ?? 0
+            playerManager.playSlice(sourceList, startIndex: idx)
             recentlyPlayedManager.trackPlayed(track)
             selectedTab = .favorites
         } label: {

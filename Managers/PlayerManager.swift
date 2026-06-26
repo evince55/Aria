@@ -47,6 +47,7 @@ final class PlayerManager: NSObject, ObservableObject {
 
     enum PlayerError: Error, Equatable {
         case trackMissing(trackID: String)
+        case streamFailed(String)
     }
 
     // MARK: - Configuration
@@ -493,7 +494,7 @@ final class PlayerManager: NSObject, ObservableObject {
             } catch {
                 log.error("Stream URL fetch failed: \(error.localizedDescription, privacy: .public)")
                 if generation == self.playGeneration {
-                    self.handleFetchError()
+                    self.handleFetchError(error)
                 }
                 return
             }
@@ -516,11 +517,14 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
-    private func handleFetchError() {
+    private func handleFetchError(_ error: Error? = nil) {
         isPlaying = false
         playbackState = .idle
         switchingToEngine = false
         isStartingEngine = false
+        if let error {
+            playerError = .streamFailed(error.localizedDescription)
+        }
     }
 
     // MARK: - AVPlayer path (delegates to AVPlayerPath)

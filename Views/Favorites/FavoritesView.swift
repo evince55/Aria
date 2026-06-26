@@ -65,10 +65,10 @@ struct FavoritesView: View {
     private var shuffleButton: some View {
         Button {
             Haptics.medium()
-            if let random = favoritesManager.tracks.randomElement() {
-                playerManager.play(random)
-                recentlyPlayedManager.trackPlayed(random)
-            }
+            let tracks = favoritesManager.tracks.shuffled()
+            guard !tracks.isEmpty else { return }
+            playerManager.playSlice(tracks, startIndex: 0)
+            recentlyPlayedManager.trackPlayed(tracks[0])
         } label: {
             HStack(spacing: DS.Spacing.sm) {
                 Image(systemName: "shuffle")
@@ -133,7 +133,9 @@ struct FavoritesView: View {
     private func trackRow(_ track: Track) -> some View {
         Button {
             Haptics.light()
-            playerManager.play(track)
+            let allTracks = favoritesManager.groupedByLetter().flatMap { $0.tracks }
+            let idx = allTracks.firstIndex(where: { $0.id == track.id }) ?? 0
+            playerManager.playSlice(allTracks, startIndex: idx)
             recentlyPlayedManager.trackPlayed(track)
         } label: {
             HStack(spacing: DS.Spacing.sm) {

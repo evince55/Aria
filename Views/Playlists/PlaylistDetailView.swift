@@ -123,20 +123,20 @@ struct PlaylistDetailView: View {
         HStack(spacing: DS.Spacing.md) {
             actionPill(systemImage: "play.fill", label: "Play", filled: true) {
                 Haptics.medium()
-                if let first = currentPlaylist.tracks.first {
-                    playerManager.play(first)
-                    recentlyPlayedManager.trackPlayed(first)
-                    playlistsManager.markPlayed(currentPlaylist)
-                }
+                let tracks = currentPlaylist.tracks
+                guard !tracks.isEmpty else { return }
+                playerManager.playSlice(tracks, startIndex: 0)
+                recentlyPlayedManager.trackPlayed(tracks[0])
+                playlistsManager.markPlayed(currentPlaylist)
             }
 
             actionPill(systemImage: "shuffle", label: "Shuffle", filled: false) {
                 Haptics.medium()
-                if let random = currentPlaylist.tracks.randomElement() {
-                    playerManager.play(random)
-                    recentlyPlayedManager.trackPlayed(random)
-                    playlistsManager.markPlayed(currentPlaylist)
-                }
+                let tracks = currentPlaylist.tracks.shuffled()
+                guard !tracks.isEmpty else { return }
+                playerManager.playSlice(tracks, startIndex: 0)
+                recentlyPlayedManager.trackPlayed(tracks[0])
+                playlistsManager.markPlayed(currentPlaylist)
             }
         }
         .padding(.horizontal, DS.Spacing.lg)
@@ -200,7 +200,9 @@ struct PlaylistDetailView: View {
             ForEach(currentPlaylist.tracks) { track in
                 Button {
                     Haptics.light()
-                    playerManager.play(track)
+                    let tracks = currentPlaylist.tracks
+                    let idx = tracks.firstIndex(where: { $0.id == track.id }) ?? 0
+                    playerManager.playSlice(tracks, startIndex: idx)
                     recentlyPlayedManager.trackPlayed(track)
                     playlistsManager.markPlayed(currentPlaylist)
                 } label: {
