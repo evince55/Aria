@@ -19,8 +19,17 @@ protocol StreamResolving: Sendable {
     func stream(for videoID: String) async throws -> URL
     /// Fast path: `/api/resolve` returns the direct googlevideo URL without
     /// downloading, so AVPlayer can start immediately. The URL is signed and
-    /// expires (~6h); callers should re-resolve on playback failure.
-    func resolve(for videoID: String) async throws -> URL
+    /// expires (~6h); callers should re-resolve on playback failure. `duration`
+    /// is yt-dlp's true video length, used to cap the YouTube DASH
+    /// 2x-with-silence streams that the download path trims server-side.
+    func resolve(for videoID: String) async throws -> ResolvedStream
+}
+
+/// Result of `/api/resolve`: a directly-playable URL plus the authoritative
+/// track duration (seconds) when the backend reported one.
+struct ResolvedStream: Sendable {
+    let url: URL
+    let duration: TimeInterval?
 }
 
 actor StreamResolver: StreamResolving {
@@ -61,7 +70,7 @@ actor StreamResolver: StreamResolving {
     /// Returns the direct, immediately-playable stream URL for `videoID` via
     /// `/api/resolve` — no server-side download. The returned URL is absolute
     /// (googlevideo), signed, and short-lived.
-    func resolve(for videoID: String) async throws -> URL {
+    func resolve(for videoID: String) async throws -> ResolvedStream {
         guard let endpoint = URL(string: "\(backendURL)/api/resolve?video_id=\(videoID)") else {
             throw StreamResolverError.invalidEndpoint
         }
@@ -77,7 +86,9 @@ actor StreamResolver: StreamResolving {
             throw StreamResolverError.malformedResponse
         }
 
-        return url
+        // `duration` may arrive as Int or Double depending on yt-dlp; accept both.
+        let duration = (json["duration"] as? Double) ?? (json["duration"] as? Int).map(Double.init)
+        return ResolvedStream(url: url, duration: duration)
     }
 
     private static func validate(response: URLResponse, data: Data) throws {

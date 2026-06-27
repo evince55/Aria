@@ -570,11 +570,17 @@ final class PlayerManager: NSObject, ObservableObject {
             guard let self else { return }
 
             let streamURL: URL
+            // Authoritative track length from the backend (resolve path only),
+            // used to cap YouTube DASH 2x-with-silence streams that the
+            // download path trims server-side.
+            var knownDuration: TimeInterval?
             do {
                 if useEngine {
                     streamURL = try await self.streamResolver.stream(for: videoID)
                 } else {
-                    streamURL = try await self.streamResolver.resolve(for: videoID)
+                    let resolved = try await self.streamResolver.resolve(for: videoID)
+                    streamURL = resolved.url
+                    knownDuration = resolved.duration
                 }
             } catch is CancellationError {
                 return
@@ -599,7 +605,7 @@ final class PlayerManager: NSObject, ObservableObject {
             if useEngine {
                 self.downloadAndPlayEngine(url: streamURL)
             } else {
-                self.playAVPlayer(url: streamURL)
+                self.playAVPlayer(url: streamURL, knownDuration: knownDuration)
             }
         }
     }
@@ -616,10 +622,10 @@ final class PlayerManager: NSObject, ObservableObject {
 
     // MARK: - AVPlayer path (delegates to AVPlayerPath)
 
-    private func playAVPlayer(url: URL) {
+    private func playAVPlayer(url: URL, knownDuration: TimeInterval? = nil) {
         avPlayerPath.pendingSeek = seekTarget
         seekTarget = nil
-        avPlayerPath.play(url: url)
+        avPlayerPath.play(url: url, knownDuration: knownDuration)
     }
 
     /// Selector target for the end-of-item notification registered by `AVPlayerPath`.
