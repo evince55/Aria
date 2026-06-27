@@ -176,10 +176,9 @@ struct SearchView: View {
                     SectionLabel(title: "Based on your listening", tokens: tokens)
                         .padding(.horizontal, DS.Spacing.lg)
 
-                    let recentSlice = Array(recentlyPlayedManager.recentlyPlayed.prefix(8))
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.md), count: 2), spacing: DS.Spacing.md) {
-                        ForEach(recentSlice) { track in
-                            trackCard(track, sourceList: recentSlice)
+                        ForEach(recentlyPlayedManager.recentlyPlayed.prefix(8)) { track in
+                            trackCard(track)
                         }
                     }
                     .padding(.horizontal, DS.Spacing.lg)
@@ -206,10 +205,9 @@ struct SearchView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, DS.Spacing.lg)
             } else {
-                let trendingSlice = Array(recentlyPlayedManager.recentlyPlayed.prefix(20))
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DS.Spacing.md), count: 3), spacing: DS.Spacing.md) {
-                    ForEach(trendingSlice) { track in
-                        tileCard(track, sourceList: trendingSlice)
+                    ForEach(recentlyPlayedManager.recentlyPlayed.prefix(20)) { track in
+                        tileCard(track)
                     }
                 }
                 .padding(.horizontal, DS.Spacing.lg)
@@ -237,8 +235,9 @@ struct SearchView: View {
                     let isCurrent = playerManager.currentTrack?.id == track.id
                     Button {
                         Haptics.light()
-                        let idx = tracks.firstIndex(where: { $0.id == track.id }) ?? 0
-                        playerManager.playSlice(tracks, startIndex: idx)
+                        // Start an endless "similar songs" radio seeded from the
+                        // tapped result instead of queuing the raw search list.
+                        playerManager.playRadio(seed: track)
                         recentlyPlayedManager.trackPlayed(track)
                         selectedTab = .favorites
                     } label: {
@@ -333,11 +332,10 @@ struct SearchView: View {
 
     // MARK: - Track Cards
 
-    private func trackCard(_ track: Track, sourceList: [Track]) -> some View {
+    private func trackCard(_ track: Track) -> some View {
         Button {
             Haptics.light()
-            let idx = sourceList.firstIndex(where: { $0.id == track.id }) ?? 0
-            playerManager.playSlice(sourceList, startIndex: idx)
+            playerManager.playRadio(seed: track)
             recentlyPlayedManager.trackPlayed(track)
             selectedTab = .favorites
         } label: {
@@ -366,11 +364,10 @@ struct SearchView: View {
         .addToQueueGesture(playerManager: playerManager, track: track)
     }
 
-    private func tileCard(_ track: Track, sourceList: [Track]) -> some View {
+    private func tileCard(_ track: Track) -> some View {
         Button {
             Haptics.light()
-            let idx = sourceList.firstIndex(where: { $0.id == track.id }) ?? 0
-            playerManager.playSlice(sourceList, startIndex: idx)
+            playerManager.playRadio(seed: track)
             recentlyPlayedManager.trackPlayed(track)
             selectedTab = .favorites
         } label: {

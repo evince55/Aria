@@ -77,9 +77,22 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private var urlSession: URLSessionProtocol!
     private var streamResolver: StreamResolving!
+    private var radioService: RadioServing!
 
     var nowPlaying: NowPlayingService!
     private var avPlayerPath: AVPlayerPath!
+
+    // MARK: - Radio (endless similar-song autoplay)
+
+    /// Whether the current queue is a radio (auto-refilling) queue. Cleared
+    /// when the user explicitly seeds the queue another way (playSlice).
+    private var radioActive = false
+    /// IDs already queued/played in this radio session, to avoid repeats on
+    /// refill.
+    private var radioSeen = Set<String>()
+    private var radioRefillTask: Task<Void, Never>?
+    /// Refill the radio queue once it drops to this many upcoming tracks.
+    private let radioRefillThreshold = 4
 
     // MARK: - Engine path
 
@@ -114,6 +127,7 @@ final class PlayerManager: NSObject, ObservableObject {
         let session = Self.defaultURLSession()
         self.urlSession = session
         self.streamResolver = StreamResolver(session: session)
+        self.radioService = RadioService(session: session)
         self.eq = EQController()
         super.init()
         nowPlaying = NowPlayingService(player: self, urlSession: session)
@@ -133,6 +147,7 @@ final class PlayerManager: NSObject, ObservableObject {
     init(urlSession: URLSessionProtocol, eq: EQController = EQController()) {
         self.urlSession = urlSession
         self.streamResolver = StreamResolver(session: urlSession)
+        self.radioService = RadioService(session: urlSession)
         self.eq = eq
         super.init()
         let session = urlSession
@@ -426,10 +441,60 @@ final class PlayerManager: NSObject, ObservableObject {
             log.notice("playSlice skipped \(missing.count) missing track(s)")
         }
         guard !playable.isEmpty else { return }
+        // Explicit collection playback supersedes any active radio session.
+        endRadio()
         let idx = max(0, min(startIndex, playable.count - 1))
         let upcoming = Array(playable.dropFirst(idx + 1))
         queue = upcoming
         play(playable[idx])
+    }
+
+    // MARK: - Radio
+
+    /// Starts an endless "play similar songs" session seeded from `seed`:
+    /// plays the seed immediately, then fills the queue from the backend's
+    /// YouTube-Mix radio and keeps refilling as it drains. Used by Search so
+    /// tapping a result plays related music instead of the raw result list.
+    func playRadio(seed: Track) {
+        radioActive = true
+        radioSeen = [seed.id]
+        radioRefillTask?.cancel()
+        queue = []
+        play(seed)
+        refillRadio(from: seed.id, replacing: true)
+    }
+
+    private func endRadio() {
+        radioActive = false
+        radioRefillTask?.cancel()
+        radioRefillTask = nil
+        radioSeen.removeAll()
+    }
+
+    /// Fetches similar tracks for `seedID` and either replaces or appends to
+    /// the queue, skipping anything already seen this session.
+    private func refillRadio(from seedID: String, replacing: Bool) {
+        guard radioActive else { return }
+        radioRefillTask?.cancel()
+        radioRefillTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let fresh: [Track]
+            do {
+                fresh = try await self.radioService.similar(to: seedID, limit: 25)
+            } catch {
+                log.error("Radio refill failed: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+            if Task.isCancelled || !self.radioActive { return }
+            let novel = fresh.filter { self.radioSeen.insert($0.id).inserted }
+            guard !novel.isEmpty else { return }
+            if replacing {
+                self.queue = novel
+            } else {
+                self.queue.append(contentsOf: novel)
+            }
+            log.notice("Radio: +\(novel.count) tracks (queue=\(self.queue.count))")
+        }
     }
 
     /// TODO: Currently a no-op distinction — both branches restart the current
@@ -470,6 +535,12 @@ final class PlayerManager: NSObject, ObservableObject {
             return
         }
         let next = queue.removeFirst()
+        radioSeen.insert(next.id)
+        // Top up an endless radio queue before it runs dry, seeded from the
+        // track we're about to play so the station evolves with the listening.
+        if radioActive && queue.count <= radioRefillThreshold {
+            refillRadio(from: next.id, replacing: false)
+        }
         play(next)
     }
 
