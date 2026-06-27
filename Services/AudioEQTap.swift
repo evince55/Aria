@@ -41,9 +41,15 @@ final class AudioEQTap {
 
     /// Builds an `AVAudioMix` that routes `track`'s audio through this tap.
     func makeAudioMix(for track: AVAssetTrack) -> AVAudioMix? {
+        // RETAIN self into the tap: the tap's callbacks (process/unprepare/
+        // finalize) run on the audio thread and can fire while/after the owner
+        // (AVPlayerPath) has dropped its `eqTap` reference — e.g. on skip, when
+        // the old item and its tap are torn down. With passUnretained that was a
+        // use-after-free (crash / debugger hang). `finalize` releases the +1.
+        let clientInfo = Unmanaged.passRetained(self).toOpaque()
         var callbacks = MTAudioProcessingTapCallbacks(
             version: kMTAudioProcessingTapCallbacksVersion_0,
-            clientInfo: Unmanaged.passUnretained(self).toOpaque(),
+            clientInfo: clientInfo,
             init: tapInit,
             finalize: tapFinalize,
             prepare: tapPrepare,
@@ -54,7 +60,10 @@ final class AudioEQTap {
         let status = MTAudioProcessingTapCreate(
             kCFAllocatorDefault, &callbacks,
             kMTAudioProcessingTapCreationFlag_PreEffects, &tapRef)
-        guard status == noErr, let tap = tapRef else { return nil }
+        guard status == noErr, let tap = tapRef else {
+            Unmanaged<AudioEQTap>.fromOpaque(clientInfo).release()  // no tap → no finalize
+            return nil
+        }
 
         let params = AVMutableAudioMixInputParameters(track: track)
         params.audioTapProcessor = tap  // mix retains the tap
@@ -104,7 +113,11 @@ private let tapInit: MTAudioProcessingTapInitCallback = { _, clientInfo, tapStor
     tapStorageOut.pointee = clientInfo
 }
 
-private let tapFinalize: MTAudioProcessingTapFinalizeCallback = { _ in }
+private let tapFinalize: MTAudioProcessingTapFinalizeCallback = { tap in
+    // Balance the passRetained(self) from makeAudioMix — the tap is done with
+    // its context now, so the AudioEQTap (and its AudioUnit) can deallocate.
+    Unmanaged<AudioEQTap>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release()
+}
 
 private let tapPrepare: MTAudioProcessingTapPrepareCallback = { tap, _, format in
     context(tap).prepare(format: format.pointee)
