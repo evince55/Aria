@@ -7,7 +7,7 @@ struct QueueView: View {
 
     private var tokens: DesignTokens { themeManager.tokens }
 
-    @State private var rowFrames: [CGRect] = []
+    @State private var rowFrames: [String: CGRect] = [:]
     @State private var draggingIndex: Int? = nil
     @State private var dragOffset: CGFloat = 0
 
@@ -97,14 +97,17 @@ struct QueueView: View {
                         track: track,
                         index: index,
                         isCurrent: index == 0,
-                        onTap: { onRowTap(index) },
-                        onReorder: { from, to in
-                            let safeTo = min(to, playerManager.queue.count - 1)
-                            playerManager.moveQueueItem(from: IndexSet(integer: from), to: safeTo)
-                        },
                         rowFrames: $rowFrames,
                         draggingIndex: $draggingIndex,
-                        dragOffset: $dragOffset
+                        dragOffset: $dragOffset,
+                        onTap: { onRowTap(index) },
+                        onDragChanged: { translation, pointerY in
+                            handleDragChanged(fromIndex: index, translation: translation, pointerY: pointerY)
+                        },
+                        onDragEnded: {
+                            draggingIndex = nil
+                            dragOffset = 0
+                        }
                     )
                     .padding(.horizontal, DS.Spacing.lg)
                     .padding(.vertical, 4)
@@ -112,6 +115,36 @@ struct QueueView: View {
             }
         }
         .coordinateSpace(name: "QueueList")
+    }
+
+    private func handleDragChanged(fromIndex: Int, translation: CGSize, pointerY: CGFloat) {
+        if draggingIndex == nil {
+            Haptics.medium()
+            draggingIndex = fromIndex
+        }
+        dragOffset = translation.height
+
+        // Build ordered frames from the dictionary, in current queue order.
+        // This is always safe: if a frame is missing for a row, the row is
+        // skipped (compactMap drops nils), and the engine clamps indices
+        // to the resulting array bounds.
+        let orderedIDs = playerManager.queue.map(\.id)
+        let orderedFrames: [CGRect] = orderedIDs.compactMap { rowFrames[$0] }
+        guard orderedFrames.count == orderedIDs.count else { return }
+
+        if let result = QueueDragEngine.update(
+            currentOrder: orderedIDs,
+            rowFrames: orderedFrames,
+            pointerY: pointerY
+        ) {
+            let newIndex = result.newIndex
+            if newIndex != fromIndex {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    playerManager.moveQueueItem(from: IndexSet(integer: fromIndex), to: newIndex)
+                    draggingIndex = newIndex
+                }
+            }
+        }
     }
 
     private func onRowTap(_ index: Int) {

@@ -4,11 +4,12 @@ struct DraggableQueueRow: View {
     let track: Track
     let index: Int
     let isCurrent: Bool
-    let onTap: () -> Void
-    let onReorder: (Int, Int) -> Void
-    @Binding var rowFrames: [CGRect]
+    @Binding var rowFrames: [String: CGRect]
     @Binding var draggingIndex: Int?
     @Binding var dragOffset: CGFloat
+    let onTap: () -> Void
+    let onDragChanged: (CGSize, CGFloat) -> Void
+    let onDragEnded: () -> Void
 
     var body: some View {
         HStack(spacing: DS.Spacing.sm) {
@@ -41,39 +42,23 @@ struct DraggableQueueRow: View {
                 .onChanged { value in
                     switch value {
                     case .second(true, let drag?):
-                        if draggingIndex == nil {
-                            Haptics.medium()
-                            draggingIndex = index
-                        }
-                        dragOffset = drag.translation.height
-                        if let result = QueueDragEngine.update(
-                            currentOrder: rowFrames.indices.map { String($0) },
-                            rowFrames: rowFrames,
-                            pointerY: rowFrames[index].midY + dragOffset
-                        ) {
-                            let newIndex = result.newIndex
-                            if newIndex != index {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    onReorder(index, newIndex)
-                                    draggingIndex = newIndex
-                                }
-                            }
-                        }
+                        let rowFrame = rowFrames[track.id] ?? .zero
+                        let pointerY = rowFrame.midY + drag.translation.height
+                        onDragChanged(drag.translation, pointerY)
                     default:
                         break
                     }
                 }
                 .onEnded { _ in
-                    draggingIndex = nil
-                    dragOffset = 0
+                    onDragEnded()
                 }
         )
         .background(
             GeometryReader { geo in
                 Color.clear
-                    .onAppear { rowFrames[index] = geo.frame(in: .named("QueueList")) }
+                    .onAppear { rowFrames[track.id] = geo.frame(in: .named("QueueList")) }
                     .onChange(of: geo.frame(in: .named("QueueList"))) { newFrame in
-                        rowFrames[index] = newFrame
+                        rowFrames[track.id] = newFrame
                     }
             }
         )
