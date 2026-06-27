@@ -619,7 +619,7 @@ final class PlayerManager: NSObject, ObservableObject {
         nowPlaying.configureRemoteCommands()
         setupEngine()
 
-        guard let engine, engineNode != nil, eqUnit != nil else {
+        guard let engine, let node = engineNode, let eqUnit = eqUnit else {
             isStartingEngine = false
             fallbackToPlayer(fileURL: fileURL)
             return
@@ -638,6 +638,24 @@ final class PlayerManager: NSObject, ObservableObject {
 
         let sampleRate = format?.mSampleRate ?? 44100
         let channels = format?.mChannelsPerFrame ?? 2
+
+        let bufferFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: AVAudioChannelCount(channels), interleaved: false)
+            ?? AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: AVAudioChannelCount(channels))!
+
+        // Reconnect the player node with the *source file's* format so the
+        // scheduled buffers match the node's output format. The engine is
+        // created once and reused across tracks, so a previous track's sample
+        // rate (or the nil-inferred hardware rate) can mismatch this track —
+        // scheduleBuffer then traps on
+        // `_outputFormat.sampleRate == buffer.format.sampleRate`. This is the
+        // most common AVAudioEngine crash and is hit hardest by hi-res local
+        // files (e.g. 96 kHz FLAC) whose rate differs from the 44.1/48 kHz
+        // default. The mainMixerNode handles conversion to the hardware rate.
+        node.stop()
+        engine.disconnectNodeOutput(node)
+        engine.disconnectNodeOutput(eqUnit)
+        engine.connect(node, to: eqUnit, format: bufferFormat)
+        engine.connect(eqUnit, to: engine.mainMixerNode, format: bufferFormat)
 
         let outputSettings: [String: Any] = [
             AVFormatIDKey: kAudioFormatLinearPCM,
@@ -679,9 +697,6 @@ final class PlayerManager: NSObject, ObservableObject {
                 return
             }
         }
-
-        let bufferFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: AVAudioChannelCount(channels), interleaved: false)
-            ?? AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: AVAudioChannelCount(channels))!
 
         scheduleGeneration += 1
         let gen = scheduleGeneration
@@ -762,30 +777,25 @@ final class PlayerManager: NSObject, ObservableObject {
         let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
         guard frameCount > 0 else { return nil }
         guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)) else { return nil }
+        pcmBuffer.frameLength = AVAudioFrameCount(frameCount)
 
-        guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return nil }
-
-        var dataPointer: UnsafeMutablePointer<Int8>?
-        var totalLength = 0
-        CMBlockBufferGetDataPointer(blockBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &totalLength, dataPointerOut: &dataPointer)
-
-        guard let src = dataPointer, totalLength > 0 else { return nil }
-
-        let channelCount = Int(format.channelCount)
-        let bytesPerChannel = totalLength / channelCount
-        let floatCount = bytesPerChannel / MemoryLayout<Float>.size
-        let actualFrameCount = min(floatCount, Int(frameCount))
-        guard actualFrameCount > 0 else { return nil }
-
-        for ch in 0..<channelCount {
-            if let dst = pcmBuffer.floatChannelData?[ch] {
-                let offset = ch * floatCount
-                let srcFloats = src.withMemoryRebound(to: Float.self, capacity: totalLength / MemoryLayout<Float>.size) { $0 }
-                dst.update(from: srcFloats + offset, count: actualFrameCount)
-            }
+        // Let CoreMedia copy the decoded PCM into the buffer's audioBufferList.
+        // The previous hand-rolled pointer arithmetic assumed the CMBlockBuffer
+        // was contiguous and planar with a channel count matching `format` —
+        // none of which is guaranteed. Non-contiguous block buffers, mono
+        // sources, or interleaved data all caused out-of-bounds reads (crash /
+        // corruption), most often on local FLAC/ALAC imports. This API handles
+        // contiguity and layout correctly per the sample buffer's own format.
+        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
+            sampleBuffer,
+            at: 0,
+            frameCount: Int32(frameCount),
+            into: pcmBuffer.mutableAudioBufferList
+        )
+        guard status == noErr else {
+            log.error("PCM copy failed: OSStatus \(status, privacy: .public)")
+            return nil
         }
-
-        pcmBuffer.frameLength = AVAudioFrameCount(actualFrameCount)
         return pcmBuffer
     }
 

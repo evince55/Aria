@@ -61,23 +61,43 @@ final class URLSessionAdapter: URLSessionProtocol {
     ) async throws -> URL {
         let (bytes, response) = try await session.bytes(from: url)
         let total = response.expectedContentLength
-        var received = Int64(0)
-        var data = Data()
-        for try await byte in bytes {
-            data.append(byte)
-            received += 1
-            // Only report progress when the server told us how big the
-            // payload is. Streaming endpoints with chunked encoding
-            // (no `Content-Length`) get progress = 0 until completion,
-            // which the UI treats as indeterminate.
-            if total > 0 {
-                let p = min(1.0, Double(received) / Double(total))
-                onProgress(p)
-            }
-        }
+
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("aria_download_\(UUID().uuidString)")
-        try data.write(to: tempURL)
+        FileManager.default.createFile(atPath: tempURL.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: tempURL)
+        defer { try? handle.close() }
+
+        // Flush to disk in fixed-size chunks instead of accumulating the whole
+        // file in memory. The previous `Data.append(byte)` per byte held the
+        // entire (potentially 100s of MB) download in RAM — an OOM/jetsam kill
+        // on long tracks or hi-res audio. Memory is now bounded to the chunk.
+        let chunkSize = 64 * 1024
+        var chunk = Data()
+        chunk.reserveCapacity(chunkSize)
+        var received = Int64(0)
+
+        func flush() throws {
+            guard !chunk.isEmpty else { return }
+            try handle.write(contentsOf: chunk)
+            chunk.removeAll(keepingCapacity: true)
+            // Only report progress when the server told us how big the payload
+            // is. Chunked-encoding responses (no `Content-Length`) report 0
+            // until completion, which the UI treats as indeterminate.
+            if total > 0 {
+                onProgress(min(1.0, Double(received) / Double(total)))
+            }
+        }
+
+        for try await byte in bytes {
+            chunk.append(byte)
+            received += 1
+            if chunk.count >= chunkSize {
+                try flush()
+            }
+        }
+        try flush()
+        if total > 0 { onProgress(1.0) }
         return tempURL
     }
 }
