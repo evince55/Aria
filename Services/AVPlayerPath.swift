@@ -27,6 +27,10 @@ final class AVPlayerPath {
     /// YouTube DASH stream reports 2x its real length (song + equal silence).
     private var knownDuration: TimeInterval?
 
+    /// Real-time EQ tap attached to the current item's audio (streamed EQ).
+    /// nil until EQ is first enabled for an item.
+    private var eqTap: AudioEQTap?
+
     init(player: PlayerManager) {
         self.player = player
     }
@@ -115,12 +119,55 @@ final class AVPlayerPath {
 
         addEndObserver(for: playerItem)
 
+        // Fresh item → fresh tap. Attach now if EQ is already on.
+        eqTap = nil
+        if player.eq.isEnabled {
+            attachEQ(bands: player.eq.bands)
+        }
+
         if let seek = pendingSeek {
             avPlayer?.seek(to: CMTime(seconds: seek, preferredTimescale: 600))
             pendingSeek = nil
         }
         avPlayer?.play()
         player.isUsingEngine = false
+    }
+
+    // MARK: - EQ (real-time tap)
+
+    /// Enables or disables EQ on the current streamed item. The first enable
+    /// attaches the tap (async track load); thereafter we just toggle bypass so
+    /// there's no re-attach hitch.
+    func setEQEnabled(_ enabled: Bool) {
+        if enabled {
+            if let tap = eqTap {
+                tap.setBypass(false)
+            } else if let bands = player?.eq.bands {
+                attachEQ(bands: bands)
+            }
+        } else {
+            eqTap?.setBypass(true)
+        }
+    }
+
+    func updateEQBands(_ bands: [Float]) {
+        eqTap?.setBands(bands)
+    }
+
+    /// Builds an `AudioEQTap`, loads the current item's audio track, and sets the
+    /// resulting `audioMix` — applying EQ to the live stream with no download.
+    private func attachEQ(bands: [Float]) {
+        guard let item = playerItem else { return }
+        let tap = AudioEQTap(frequencies: PlayerManager.eqFrequencies, bands: bands, bypassed: false)
+        eqTap = tap
+        let asset = item.asset
+        Task { @MainActor [weak self] in
+            guard let self,
+                  let track = try? await asset.loadTracks(withMediaType: .audio).first,
+                  self.eqTap === tap, self.playerItem === item,
+                  let mix = tap.makeAudioMix(for: track) else { return }
+            item.audioMix = mix
+        }
     }
 
     /// Plays the current item from the beginning (used by `repeatMode == .one`).
@@ -174,6 +221,7 @@ final class AVPlayerPath {
         avPlayer = nil
         playerItem = nil
         timeObserver = nil
+        eqTap = nil
     }
 
     // MARK: - Duration fix-up

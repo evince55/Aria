@@ -274,7 +274,7 @@ final class PlayerManager: NSObject, ObservableObject {
         stopAllPlayback()
         nowPlaying.updateNowPlaying()
         nowPlaying.loadArtwork(for: track)
-        fetchStreamURL(for: track.id, generation: gen, allowInstantStart: true)
+        fetchStreamURL(for: track.id, generation: gen)
     }
 
     /// Plays a local file. Honors the current EQ setting: EQ on routes
@@ -369,15 +369,39 @@ final class PlayerManager: NSObject, ObservableObject {
         handleEQOutcome(outcome)
     }
 
+    /// Streamed tracks run EQ through the real-time AVPlayer tap; local files
+    /// still use the engine (migrating to the tap in a later phase).
+    private var isCurrentTrackLocal: Bool { currentTrack?.localFileURL != nil }
+
     func resetEQ() {
         let wasEnabled = eq.reset()
         pendingEngineSwitch = false
+        if !isCurrentTrackLocal {
+            avPlayerPath.setEQEnabled(false)
+            return
+        }
         if wasEnabled && isUsingEngine {
             switchBackToPlayer()
         }
     }
 
     private func handleEQOutcome(_ outcome: EQApplyOutcome) {
+        if !isCurrentTrackLocal {
+            // Streamed: the tap applies EQ live on AVPlayer — no engine, no
+            // download, no playback restart.
+            switch outcome {
+            case .noChange, .stillEnabled:
+                avPlayerPath.updateEQBands(eq.bands)
+            case .becameEnabled:
+                avPlayerPath.updateEQBands(eq.bands)
+                avPlayerPath.setEQEnabled(true)
+            case .becameDisabled:
+                avPlayerPath.setEQEnabled(false)
+            }
+            return
+        }
+
+        // Local files: existing engine path.
         switch outcome {
         case .noChange:
             if isUsingEngine { applyBandsToEngine(eq.bands) }
@@ -581,28 +605,18 @@ final class PlayerManager: NSObject, ObservableObject {
     /// AVPlayer instantly from the direct /api/resolve URL and prepare the EQ
     /// engine in the background (see `prepareEngineSwap`). The toggle/seek
     /// callers leave it false and go straight to the engine as before.
-    private func fetchStreamURL(for videoID: String, generation: Int, allowInstantStart: Bool = false) {
+    /// Resolves a streamed track to a direct URL and plays it instantly via
+    /// AVPlayer. EQ (if on) is applied by the real-time tap inside `AVPlayerPath`
+    /// — no engine, no download. Local-file EQ still uses the engine (migrating
+    /// to the tap in a later phase).
+    private func fetchStreamURL(for videoID: String, generation: Int) {
         streamTask?.cancel()
-        let useEngine = eq.isEnabled
-        let instantHybrid = useEngine && allowInstantStart
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            let streamURL: URL
-            // Authoritative track length from the backend (resolve path only),
-            // used to cap YouTube DASH 2x-with-silence streams that the
-            // download path trims server-side.
-            var knownDuration: TimeInterval?
+            let resolved: ResolvedStream
             do {
-                // Engine-direct (toggle/seek) needs the downloaded /api/play
-                // file; everything else can start instantly from /api/resolve.
-                if useEngine && !instantHybrid {
-                    streamURL = try await self.streamResolver.stream(for: videoID)
-                } else {
-                    let resolved = try await self.streamResolver.resolve(for: videoID)
-                    streamURL = resolved.url
-                    knownDuration = resolved.duration
-                }
+                resolved = try await self.streamResolver.resolve(for: videoID)
             } catch is CancellationError {
                 return
             } catch {
@@ -614,23 +628,11 @@ final class PlayerManager: NSObject, ObservableObject {
             }
 
             if Task.isCancelled { return }
-
-            // Bail if a newer play() arrived while the network call was
-            // in flight. The Task cancellation handles the common case;
-            // this check covers the brief window where the cancel
-            // hasn't propagated to the resolver yet.
+            // Bail if a newer play() arrived while the network call was in flight.
             guard generation == self.playGeneration else { return }
 
-            self.currentStreamURL = streamURL
-            if instantHybrid {
-                log.notice("instant-start gen=\(generation, privacy: .public); engine prep deferred")
-                self.playAVPlayer(url: streamURL, knownDuration: knownDuration)
-                self.prepareEngineSwap(videoID: videoID, generation: generation)
-            } else if useEngine {
-                self.downloadAndPlayEngine(url: streamURL)
-            } else {
-                self.playAVPlayer(url: streamURL, knownDuration: knownDuration)
-            }
+            self.currentStreamURL = resolved.url
+            self.playAVPlayer(url: resolved.url, knownDuration: resolved.duration)
         }
     }
 
@@ -709,7 +711,7 @@ final class PlayerManager: NSObject, ObservableObject {
             playGeneration += 1
             let gen = playGeneration
             playbackState = .loading
-            fetchStreamURL(for: videoID, generation: gen, allowInstantStart: true)
+            fetchStreamURL(for: videoID, generation: gen)
             return
         }
         isPlaying = false
