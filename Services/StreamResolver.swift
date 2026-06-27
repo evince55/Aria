@@ -12,7 +12,15 @@ import Foundation
 /// with each other, and Swift's structured concurrency handles
 /// cancellation when `PlayerManager` switches tracks.
 protocol StreamResolving: Sendable {
+    /// Full path: `/api/play` downloads + caches the file server-side, then
+    /// returns the cached `/api/stream/...` URL. Needed by the EQ engine path
+    /// (which reads a local file) and for offline. Blocks until the download
+    /// finishes — slow first-play.
     func stream(for videoID: String) async throws -> URL
+    /// Fast path: `/api/resolve` returns the direct googlevideo URL without
+    /// downloading, so AVPlayer can start immediately. The URL is signed and
+    /// expires (~6h); callers should re-resolve on playback failure.
+    func resolve(for videoID: String) async throws -> URL
 }
 
 actor StreamResolver: StreamResolving {
@@ -48,6 +56,28 @@ actor StreamResolver: StreamResolving {
         }
 
         return streamURL
+    }
+
+    /// Returns the direct, immediately-playable stream URL for `videoID` via
+    /// `/api/resolve` — no server-side download. The returned URL is absolute
+    /// (googlevideo), signed, and short-lived.
+    func resolve(for videoID: String) async throws -> URL {
+        guard let endpoint = URL(string: "\(backendURL)/api/resolve?video_id=\(videoID)") else {
+            throw StreamResolverError.invalidEndpoint
+        }
+
+        let (data, response) = try await session.data(from: endpoint)
+        try Self.validate(response: response, data: data)
+
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let urlString = json["url"] as? String,
+            let url = URL(string: urlString)
+        else {
+            throw StreamResolverError.malformedResponse
+        }
+
+        return url
     }
 
     private static func validate(response: URLResponse, data: Data) throws {

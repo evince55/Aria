@@ -489,12 +489,22 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private func fetchStreamURL(for videoID: String, generation: Int) {
         streamTask?.cancel()
+        // Capture the EQ decision once: the engine path needs a downloaded
+        // local file (/api/play), but the plain AVPlayer path can start
+        // instantly from the direct URL (/api/resolve) — no full download.
+        // Deciding up front avoids a race where eq.isEnabled flips mid-fetch
+        // and we resolve one way but dispatch the other.
+        let useEngine = eq.isEnabled
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
             let streamURL: URL
             do {
-                streamURL = try await self.streamResolver.stream(for: videoID)
+                if useEngine {
+                    streamURL = try await self.streamResolver.stream(for: videoID)
+                } else {
+                    streamURL = try await self.streamResolver.resolve(for: videoID)
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -513,9 +523,9 @@ final class PlayerManager: NSObject, ObservableObject {
             // hasn't propagated to the resolver yet.
             guard generation == self.playGeneration else { return }
 
-            log.notice("Got stream URL \(streamURL.absoluteString, privacy: .public) gen=\(generation, privacy: .public) willDispatchTo=\(self.eq.isEnabled ? "engine" : "playNative", privacy: .public)")
+            log.notice("Got stream URL \(streamURL.absoluteString, privacy: .public) gen=\(generation, privacy: .public) willDispatchTo=\(useEngine ? "engine" : "playNative", privacy: .public)")
             self.currentStreamURL = streamURL
-            if self.eq.isEnabled {
+            if useEngine {
                 self.downloadAndPlayEngine(url: streamURL)
             } else {
                 self.playAVPlayer(url: streamURL)
