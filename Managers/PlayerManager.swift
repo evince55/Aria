@@ -265,6 +265,8 @@ final class PlayerManager: NSObject, ObservableObject {
 
         currentTrack = track
         currentArtworkURL = track.thumbnailURL
+        currentVideoID = track.id
+        didRetryResolve = false
         isPlaying = true
         playbackState = .loading
         currentTime = 0
@@ -295,6 +297,8 @@ final class PlayerManager: NSObject, ObservableObject {
 
         currentTrack = track
         currentArtworkURL = track.thumbnailURL
+        currentVideoID = nil  // local file — nothing to re-resolve
+        didRetryResolve = false
         isPlaying = true
         playbackState = .loading
         currentTime = 0
@@ -557,6 +561,11 @@ final class PlayerManager: NSObject, ObservableObject {
     /// `generation` check is a defensive fallback in case the cancel
     /// races with the response.
     private var streamTask: Task<Void, Never>?
+    /// Video ID of the current streamed track (nil for local files), used to
+    /// re-resolve a failed direct URL. `didRetryResolve` caps it to one retry
+    /// per play so a genuinely dead track surfaces an error instead of looping.
+    private var currentVideoID: String?
+    private var didRetryResolve = false
     /// Background "prepare the EQ engine and swap to it" task for the instant-
     /// start hybrid (AVPlayer plays immediately; the engine takes over once its
     /// file is downloaded). Cancelled on any new play/skip.
@@ -680,6 +689,27 @@ final class PlayerManager: NSObject, ObservableObject {
         if let error {
             playerError = .streamFailed(error.localizedDescription)
         }
+    }
+
+    /// Called by `AVPlayerPath` when its item fails. A streamed track's direct
+    /// URL can fail transiently (signed-URL expiry, a flaky cached engine file
+    /// after EQ-off), so we re-resolve and retry once before surfacing an error
+    /// — turning the "switch back and forth until it works" dance into an
+    /// automatic recovery.
+    func handleAVPlayerItemFailure(_ error: Error?) {
+        if let videoID = currentVideoID, !didRetryResolve, !isUsingEngine {
+            didRetryResolve = true
+            log.notice("AVPlayer item failed; re-resolving \(videoID, privacy: .public) once")
+            playGeneration += 1
+            let gen = playGeneration
+            playbackState = .loading
+            fetchStreamURL(for: videoID, generation: gen, allowInstantStart: true)
+            return
+        }
+        isPlaying = false
+        playbackState = .idle
+        currentStreamURL = nil
+        playerError = .streamFailed(error?.localizedDescription ?? "Playback failed")
     }
 
     // MARK: - AVPlayer path (delegates to AVPlayerPath)

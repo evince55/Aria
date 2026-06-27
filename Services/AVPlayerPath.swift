@@ -46,7 +46,13 @@ final class AVPlayerPath {
         player.nowPlaying.configureRemoteCommands()
         player.stopEngine()
 
-        playerItem?.removeObserver(player, forKeyPath: #keyPath(AVPlayerItem.status))
+        // NOTE: the status observer is block-based (`observe(\.status)` below,
+        // stored in `statusObserver` and invalidated here) — it is NOT a manual
+        // KVO `addObserver(player, forKeyPath:)`. A leftover
+        // `removeObserver(player, forKeyPath: .status)` used to live here and
+        // would trap ("not registered as an observer") whenever a previous
+        // AVPlayerItem existed — dormant until instant-start made EQ-on playback
+        // create AVPlayer items. Removed.
         if let obs = timeObserver { avPlayer?.removeTimeObserver(obs) }
         statusObserver?.invalidate()
         rateObserver?.invalidate()
@@ -73,9 +79,9 @@ final class AVPlayerPath {
                 guard let self, let player = self.player else { return }
                 if item.status == .failed {
                     log.error("AVPlayerItem error: \(item.error?.localizedDescription ?? "?", privacy: .public)")
-                    player.isPlaying = false
-                    player.playbackState = .idle
-                    player.currentStreamURL = nil
+                    // Let PlayerManager decide whether to re-resolve+retry (for a
+                    // streamed track) or surface the error.
+                    player.handleAVPlayerItemFailure(item.error)
                 } else if item.status == .readyToPlay {
                     let itemDuration = item.duration
                     if itemDuration.isNumeric && !itemDuration.isIndefinite {
