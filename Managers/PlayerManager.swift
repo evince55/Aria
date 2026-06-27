@@ -638,13 +638,17 @@ final class PlayerManager: NSObject, ObservableObject {
     /// fetch + cache the engine file in the background and swap to the EQ engine
     /// at the current position once it's ready. A short debounce means tracks
     /// you skip straight past never trigger the (server-side) download.
-    private func prepareEngineSwap(videoID: String, generation: Int) {
+    private func prepareEngineSwap(videoID: String, generation: Int, debounce: Bool = true) {
         engineSwapTask?.cancel()
         engineSwapTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            try? await Task.sleep(nanoseconds: self.engineSwapDebounce)
-            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { return }
+            // Debounce only on the initial-play path (skip-through protection).
+            // A deliberate EQ toggle wants the engine prepped immediately.
+            if debounce {
+                try? await Task.sleep(nanoseconds: self.engineSwapDebounce)
+            }
+            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { self.switchingToEngine = false; return }
 
             // /api/play resolves to the cache-backed stream URL (server-side
             // download); we then ensure a local copy for the engine.
@@ -652,9 +656,10 @@ final class PlayerManager: NSObject, ObservableObject {
             do {
                 playURL = try await self.streamResolver.stream(for: videoID)
             } catch {
+                self.switchingToEngine = false
                 return  // engine prep failed — AVPlayer keeps playing (no EQ).
             }
-            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { return }
+            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { self.switchingToEngine = false; return }
 
             let cacheURL = EQCache.shared.cacheURL(for: playURL)
             if !FileManager.default.fileExists(atPath: cacheURL.path) {
@@ -667,13 +672,14 @@ final class PlayerManager: NSObject, ObservableObject {
                     }
                     try FileManager.default.moveItem(at: downloadedURL, to: cacheURL)
                 } catch {
+                    self.switchingToEngine = false
                     return  // download failed/cancelled — AVPlayer keeps playing.
                 }
             }
-            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { return }
+            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { self.switchingToEngine = false; return }
 
             // Hand off AVPlayer -> engine at the current position.
-            log.notice("instant-start: swapping to engine gen=\(generation, privacy: .public) at \(self.currentTime, privacy: .public)s")
+            log.notice("engine swap gen=\(generation, privacy: .public) at \(self.currentTime, privacy: .public)s")
             self.currentStreamURL = cacheURL
             self.seekTarget = self.currentTime
             self.avPlayerPath.stop()
@@ -1082,19 +1088,26 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private func switchToEnginePlayback() {
         guard !switchingToEngine, let track = currentTrack else { return }
-        playGeneration += 1
-        let gen = playGeneration
-        switchingToEngine = true
         pendingEngineSwitch = false
-        seekTarget = currentTime
-        avPlayerPath.stop()
-        DispatchQueue.main.async { [weak self] in
-            guard let self, gen == self.playGeneration else { return }
-            if let localURL = track.localFileURL {
+        switchingToEngine = true
+
+        if let localURL = track.localFileURL {
+            // Local: the engine starts fast (no download), so a brief stop is
+            // fine. Restart at the current position.
+            playGeneration += 1
+            let gen = playGeneration
+            seekTarget = currentTime
+            avPlayerPath.stop()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, gen == self.playGeneration else { return }
                 self.downloadAndPlayEngine(url: localURL)
-            } else {
-                self.fetchStreamURL(for: track.id, generation: gen)
             }
+        } else {
+            // Streamed: DON'T stop AVPlayer. Prepare the engine in the
+            // background and swap at the current position once its file is
+            // ready, so turning EQ on keeps the music playing instead of going
+            // silent for the length of the download.
+            prepareEngineSwap(videoID: track.id, generation: playGeneration, debounce: false)
         }
     }
 
