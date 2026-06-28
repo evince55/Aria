@@ -77,9 +77,22 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private var urlSession: URLSessionProtocol!
     private var streamResolver: StreamResolving!
+    private var radioService: RadioServing!
 
     var nowPlaying: NowPlayingService!
     private var avPlayerPath: AVPlayerPath!
+
+    // MARK: - Radio (endless similar-song autoplay)
+
+    /// Whether the current queue is a radio (auto-refilling) queue. Cleared
+    /// when the user explicitly seeds the queue another way (playSlice).
+    private var radioActive = false
+    /// IDs already queued/played in this radio session, to avoid repeats on
+    /// refill.
+    private var radioSeen = Set<String>()
+    private var radioRefillTask: Task<Void, Never>?
+    /// Refill the radio queue once it drops to this many upcoming tracks.
+    private let radioRefillThreshold = 4
 
     // MARK: - Engine path
 
@@ -114,6 +127,7 @@ final class PlayerManager: NSObject, ObservableObject {
         let session = Self.defaultURLSession()
         self.urlSession = session
         self.streamResolver = StreamResolver(session: session)
+        self.radioService = RadioService(session: session)
         self.eq = EQController()
         super.init()
         nowPlaying = NowPlayingService(player: self, urlSession: session)
@@ -133,6 +147,7 @@ final class PlayerManager: NSObject, ObservableObject {
     init(urlSession: URLSessionProtocol, eq: EQController = EQController()) {
         self.urlSession = urlSession
         self.streamResolver = StreamResolver(session: urlSession)
+        self.radioService = RadioService(session: urlSession)
         self.eq = eq
         super.init()
         let session = urlSession
@@ -250,6 +265,8 @@ final class PlayerManager: NSObject, ObservableObject {
 
         currentTrack = track
         currentArtworkURL = track.thumbnailURL
+        currentVideoID = track.id
+        didRetryResolve = false
         isPlaying = true
         playbackState = .loading
         currentTime = 0
@@ -257,7 +274,7 @@ final class PlayerManager: NSObject, ObservableObject {
         stopAllPlayback()
         nowPlaying.updateNowPlaying()
         nowPlaying.loadArtwork(for: track)
-        fetchStreamURL(for: track.id, generation: gen)
+        fetchStreamURL(for: track.id, generation: gen, allowInstantStart: true)
     }
 
     /// Plays a local file. Honors the current EQ setting: EQ on routes
@@ -280,6 +297,8 @@ final class PlayerManager: NSObject, ObservableObject {
 
         currentTrack = track
         currentArtworkURL = track.thumbnailURL
+        currentVideoID = nil  // local file — nothing to re-resolve
+        didRetryResolve = false
         isPlaying = true
         playbackState = .loading
         currentTime = 0
@@ -426,10 +445,60 @@ final class PlayerManager: NSObject, ObservableObject {
             log.notice("playSlice skipped \(missing.count) missing track(s)")
         }
         guard !playable.isEmpty else { return }
+        // Explicit collection playback supersedes any active radio session.
+        endRadio()
         let idx = max(0, min(startIndex, playable.count - 1))
         let upcoming = Array(playable.dropFirst(idx + 1))
         queue = upcoming
         play(playable[idx])
+    }
+
+    // MARK: - Radio
+
+    /// Starts an endless "play similar songs" session seeded from `seed`:
+    /// plays the seed immediately, then fills the queue from the backend's
+    /// YouTube-Mix radio and keeps refilling as it drains. Used by Search so
+    /// tapping a result plays related music instead of the raw result list.
+    func playRadio(seed: Track) {
+        radioActive = true
+        radioSeen = [seed.id]
+        radioRefillTask?.cancel()
+        queue = []
+        play(seed)
+        refillRadio(from: seed.id, replacing: true)
+    }
+
+    private func endRadio() {
+        radioActive = false
+        radioRefillTask?.cancel()
+        radioRefillTask = nil
+        radioSeen.removeAll()
+    }
+
+    /// Fetches similar tracks for `seedID` and either replaces or appends to
+    /// the queue, skipping anything already seen this session.
+    private func refillRadio(from seedID: String, replacing: Bool) {
+        guard radioActive else { return }
+        radioRefillTask?.cancel()
+        radioRefillTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let fresh: [Track]
+            do {
+                fresh = try await self.radioService.similar(to: seedID, limit: 25)
+            } catch {
+                log.error("Radio refill failed: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+            if Task.isCancelled || !self.radioActive { return }
+            let novel = fresh.filter { self.radioSeen.insert($0.id).inserted }
+            guard !novel.isEmpty else { return }
+            if replacing {
+                self.queue = novel
+            } else {
+                self.queue.append(contentsOf: novel)
+            }
+            log.notice("Radio: +\(novel.count) tracks (queue=\(self.queue.count))")
+        }
     }
 
     /// TODO: Currently a no-op distinction — both branches restart the current
@@ -470,6 +539,12 @@ final class PlayerManager: NSObject, ObservableObject {
             return
         }
         let next = queue.removeFirst()
+        radioSeen.insert(next.id)
+        // Top up an endless radio queue before it runs dry, seeded from the
+        // track we're about to play so the station evolves with the listening.
+        if radioActive && queue.count <= radioRefillThreshold {
+            refillRadio(from: next.id, replacing: false)
+        }
         play(next)
     }
 
@@ -486,15 +561,48 @@ final class PlayerManager: NSObject, ObservableObject {
     /// `generation` check is a defensive fallback in case the cancel
     /// races with the response.
     private var streamTask: Task<Void, Never>?
+    /// Video ID of the current streamed track (nil for local files), used to
+    /// re-resolve a failed direct URL. `didRetryResolve` caps it to one retry
+    /// per play so a genuinely dead track surfaces an error instead of looping.
+    private var currentVideoID: String?
+    private var didRetryResolve = false
+    /// Background "prepare the EQ engine and swap to it" task for the instant-
+    /// start hybrid (AVPlayer plays immediately; the engine takes over once its
+    /// file is downloaded). Cancelled on any new play/skip.
+    private var engineSwapTask: Task<Void, Never>?
+    /// Debounce before an instant-start engine swap kicks off its download, so
+    /// tracks you skip straight past never trigger a server-side download.
+    private let engineSwapDebounce: UInt64 = 1_500_000_000  // 1.5s
 
-    private func fetchStreamURL(for videoID: String, generation: Int) {
+    /// Resolves and starts a streamed track.
+    ///
+    /// `allowInstantStart` is set by the initial-play path (playStreamed): with
+    /// EQ on, rather than blocking on /api/play's full download, we start the
+    /// AVPlayer instantly from the direct /api/resolve URL and prepare the EQ
+    /// engine in the background (see `prepareEngineSwap`). The toggle/seek
+    /// callers leave it false and go straight to the engine as before.
+    private func fetchStreamURL(for videoID: String, generation: Int, allowInstantStart: Bool = false) {
         streamTask?.cancel()
+        let useEngine = eq.isEnabled
+        let instantHybrid = useEngine && allowInstantStart
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
             let streamURL: URL
+            // Authoritative track length from the backend (resolve path only),
+            // used to cap YouTube DASH 2x-with-silence streams that the
+            // download path trims server-side.
+            var knownDuration: TimeInterval?
             do {
-                streamURL = try await self.streamResolver.stream(for: videoID)
+                // Engine-direct (toggle/seek) needs the downloaded /api/play
+                // file; everything else can start instantly from /api/resolve.
+                if useEngine && !instantHybrid {
+                    streamURL = try await self.streamResolver.stream(for: videoID)
+                } else {
+                    let resolved = try await self.streamResolver.resolve(for: videoID)
+                    streamURL = resolved.url
+                    knownDuration = resolved.duration
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -513,13 +621,69 @@ final class PlayerManager: NSObject, ObservableObject {
             // hasn't propagated to the resolver yet.
             guard generation == self.playGeneration else { return }
 
-            log.notice("Got stream URL \(streamURL.absoluteString, privacy: .public) gen=\(generation, privacy: .public) willDispatchTo=\(self.eq.isEnabled ? "engine" : "playNative", privacy: .public)")
             self.currentStreamURL = streamURL
-            if self.eq.isEnabled {
+            if instantHybrid {
+                log.notice("instant-start gen=\(generation, privacy: .public); engine prep deferred")
+                self.playAVPlayer(url: streamURL, knownDuration: knownDuration)
+                self.prepareEngineSwap(videoID: videoID, generation: generation)
+            } else if useEngine {
                 self.downloadAndPlayEngine(url: streamURL)
             } else {
-                self.playAVPlayer(url: streamURL)
+                self.playAVPlayer(url: streamURL, knownDuration: knownDuration)
             }
+        }
+    }
+
+    /// Instant-start hybrid: AVPlayer is already playing the direct URL; here we
+    /// fetch + cache the engine file in the background and swap to the EQ engine
+    /// at the current position once it's ready. A short debounce means tracks
+    /// you skip straight past never trigger the (server-side) download.
+    private func prepareEngineSwap(videoID: String, generation: Int, debounce: Bool = true) {
+        engineSwapTask?.cancel()
+        engineSwapTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            // Debounce only on the initial-play path (skip-through protection).
+            // A deliberate EQ toggle wants the engine prepped immediately.
+            if debounce {
+                try? await Task.sleep(nanoseconds: self.engineSwapDebounce)
+            }
+            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { self.switchingToEngine = false; return }
+
+            // /api/play resolves to the cache-backed stream URL (server-side
+            // download); we then ensure a local copy for the engine.
+            let playURL: URL
+            do {
+                playURL = try await self.streamResolver.stream(for: videoID)
+            } catch {
+                self.switchingToEngine = false
+                return  // engine prep failed — AVPlayer keeps playing (no EQ).
+            }
+            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { self.switchingToEngine = false; return }
+
+            let cacheURL = EQCache.shared.cacheURL(for: playURL)
+            if !FileManager.default.fileExists(atPath: cacheURL.path) {
+                do {
+                    let downloadedURL = try await self.urlSession.downloadWithProgress(from: playURL, onProgress: { _ in })
+                    let dir = cacheURL.deletingLastPathComponent()
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    if FileManager.default.fileExists(atPath: cacheURL.path) {
+                        try FileManager.default.removeItem(at: cacheURL)
+                    }
+                    try FileManager.default.moveItem(at: downloadedURL, to: cacheURL)
+                } catch {
+                    self.switchingToEngine = false
+                    return  // download failed/cancelled — AVPlayer keeps playing.
+                }
+            }
+            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { self.switchingToEngine = false; return }
+
+            // Hand off AVPlayer -> engine at the current position.
+            log.notice("engine swap gen=\(generation, privacy: .public) at \(self.currentTime, privacy: .public)s")
+            self.currentStreamURL = cacheURL
+            self.seekTarget = self.currentTime
+            self.avPlayerPath.stop()
+            self.startEngine(with: cacheURL)
         }
     }
 
@@ -533,12 +697,33 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
+    /// Called by `AVPlayerPath` when its item fails. A streamed track's direct
+    /// URL can fail transiently (signed-URL expiry, a flaky cached engine file
+    /// after EQ-off), so we re-resolve and retry once before surfacing an error
+    /// — turning the "switch back and forth until it works" dance into an
+    /// automatic recovery.
+    func handleAVPlayerItemFailure(_ error: Error?) {
+        if let videoID = currentVideoID, !didRetryResolve, !isUsingEngine {
+            didRetryResolve = true
+            log.notice("AVPlayer item failed; re-resolving \(videoID, privacy: .public) once")
+            playGeneration += 1
+            let gen = playGeneration
+            playbackState = .loading
+            fetchStreamURL(for: videoID, generation: gen, allowInstantStart: true)
+            return
+        }
+        isPlaying = false
+        playbackState = .idle
+        currentStreamURL = nil
+        playerError = .streamFailed(error?.localizedDescription ?? "Playback failed")
+    }
+
     // MARK: - AVPlayer path (delegates to AVPlayerPath)
 
-    private func playAVPlayer(url: URL) {
+    private func playAVPlayer(url: URL, knownDuration: TimeInterval? = nil) {
         avPlayerPath.pendingSeek = seekTarget
         seekTarget = nil
-        avPlayerPath.play(url: url)
+        avPlayerPath.play(url: url, knownDuration: knownDuration)
     }
 
     /// Selector target for the end-of-item notification registered by `AVPlayerPath`.
@@ -903,19 +1088,26 @@ final class PlayerManager: NSObject, ObservableObject {
 
     private func switchToEnginePlayback() {
         guard !switchingToEngine, let track = currentTrack else { return }
-        playGeneration += 1
-        let gen = playGeneration
-        switchingToEngine = true
         pendingEngineSwitch = false
-        seekTarget = currentTime
-        avPlayerPath.stop()
-        DispatchQueue.main.async { [weak self] in
-            guard let self, gen == self.playGeneration else { return }
-            if let localURL = track.localFileURL {
+        switchingToEngine = true
+
+        if let localURL = track.localFileURL {
+            // Local: the engine starts fast (no download), so a brief stop is
+            // fine. Restart at the current position.
+            playGeneration += 1
+            let gen = playGeneration
+            seekTarget = currentTime
+            avPlayerPath.stop()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, gen == self.playGeneration else { return }
                 self.downloadAndPlayEngine(url: localURL)
-            } else {
-                self.fetchStreamURL(for: track.id, generation: gen)
             }
+        } else {
+            // Streamed: DON'T stop AVPlayer. Prepare the engine in the
+            // background and swap at the current position once its file is
+            // ready, so turning EQ on keeps the music playing instead of going
+            // silent for the length of the download.
+            prepareEngineSwap(videoID: track.id, generation: playGeneration, debounce: false)
         }
     }
 
@@ -948,6 +1140,8 @@ final class PlayerManager: NSObject, ObservableObject {
     private func stopAllPlayback() {
         downloadTask?.cancel()
         downloadTask = nil
+        engineSwapTask?.cancel()
+        engineSwapTask = nil
         seekTarget = nil
         scheduleGeneration += 1
         stopEngine()

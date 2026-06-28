@@ -288,11 +288,12 @@ final class PlayerManagerTests: XCTestCase {
         XCTAssertGreaterThan(self.mockSession.recordedRequests.count, 0)
     }
 
-    func test_PlayWithEQEnabledEntersPreparingDownloadState() async {
-        // When EQ is on and the stream isn't cached, playbackState
-        // must transition through .preparingDownload so the UI can
-        // surface a "preparing" indicator before the first buffer
-        // is scheduled.
+    func test_PlayWithEQEnabledStartsInstantlyAndDefersEngineDownload() async {
+        // Instant-start hybrid: even with EQ on, the initial play resolves the
+        // direct URL and starts AVPlayer immediately, deferring the engine
+        // download behind a debounce. So a network request is recorded, but
+        // .preparingDownload must NOT appear on the initial-play path (it would
+        // mean we blocked on a full download before any audio).
         player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         mockSession.dataFromHandler = { url in
             (
@@ -300,31 +301,25 @@ final class PlayerManagerTests: XCTestCase {
                 HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
             )
         }
-        mockSession.downloadHandler = { url, onProgress in
-            onProgress(0.0)
-            onProgress(0.5)
-            // Block briefly so the test can observe the state.
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            onProgress(1.0)
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("mock_download_\(UUID().uuidString)")
-            try Data().write(to: tempURL)
-            return tempURL
-        }
 
         var states: [PlayerManager.PlaybackState] = []
         let cancellable = player.$playbackState.sink { states.append($0) }
         defer { cancellable.cancel() }
 
         player.play(makeTrack(id: "abc", title: "A"))
+        // Well under the 1.5s engine-swap debounce.
         try? await Task.sleep(nanoseconds: 300_000_000)
 
         XCTAssertTrue(
+            self.mockSession.recordedRequests.contains(where: { $0.url.absoluteString.contains("video_id=abc") }),
+            "expected a resolve request for the played track"
+        )
+        XCTAssertFalse(
             states.contains(where: {
                 if case .preparingDownload = $0 { return true }
                 return false
             }),
-            "expected .preparingDownload to appear in state transitions, got \(states)"
+            "instant-start must not block on .preparingDownload, got \(states)"
         )
     }
 

@@ -12,7 +12,24 @@ import Foundation
 /// with each other, and Swift's structured concurrency handles
 /// cancellation when `PlayerManager` switches tracks.
 protocol StreamResolving: Sendable {
+    /// Full path: `/api/play` downloads + caches the file server-side, then
+    /// returns the cached `/api/stream/...` URL. Needed by the EQ engine path
+    /// (which reads a local file) and for offline. Blocks until the download
+    /// finishes — slow first-play.
     func stream(for videoID: String) async throws -> URL
+    /// Fast path: `/api/resolve` returns the direct googlevideo URL without
+    /// downloading, so AVPlayer can start immediately. The URL is signed and
+    /// expires (~6h); callers should re-resolve on playback failure. `duration`
+    /// is yt-dlp's true video length, used to cap the YouTube DASH
+    /// 2x-with-silence streams that the download path trims server-side.
+    func resolve(for videoID: String) async throws -> ResolvedStream
+}
+
+/// Result of `/api/resolve`: a directly-playable URL plus the authoritative
+/// track duration (seconds) when the backend reported one.
+struct ResolvedStream: Sendable {
+    let url: URL
+    let duration: TimeInterval?
 }
 
 actor StreamResolver: StreamResolving {
@@ -48,6 +65,30 @@ actor StreamResolver: StreamResolving {
         }
 
         return streamURL
+    }
+
+    /// Returns the direct, immediately-playable stream URL for `videoID` via
+    /// `/api/resolve` — no server-side download. The returned URL is absolute
+    /// (googlevideo), signed, and short-lived.
+    func resolve(for videoID: String) async throws -> ResolvedStream {
+        guard let endpoint = URL(string: "\(backendURL)/api/resolve?video_id=\(videoID)") else {
+            throw StreamResolverError.invalidEndpoint
+        }
+
+        let (data, response) = try await session.data(from: endpoint)
+        try Self.validate(response: response, data: data)
+
+        guard
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let urlString = json["url"] as? String,
+            let url = URL(string: urlString)
+        else {
+            throw StreamResolverError.malformedResponse
+        }
+
+        // `duration` may arrive as Int or Double depending on yt-dlp; accept both.
+        let duration = (json["duration"] as? Double) ?? (json["duration"] as? Int).map(Double.init)
+        return ResolvedStream(url: url, duration: duration)
     }
 
     private static func validate(response: URLResponse, data: Data) throws {

@@ -22,6 +22,11 @@ final class AVPlayerPath {
     /// resumes at the right time.
     var pendingSeek: TimeInterval?
 
+    /// Authoritative track length (seconds) supplied by the backend for the
+    /// current item, or nil. Used to override the container duration when a
+    /// YouTube DASH stream reports 2x its real length (song + equal silence).
+    private var knownDuration: TimeInterval?
+
     init(player: PlayerManager) {
         self.player = player
     }
@@ -33,14 +38,21 @@ final class AVPlayerPath {
 
     // MARK: - Playback
 
-    func play(url: URL) {
+    func play(url: URL, knownDuration: TimeInterval? = nil) {
         guard let player else { return }
         log.notice("playNative url=\(url.lastPathComponent, privacy: .public) replacingExistingPlayer=\(self.avPlayer != nil, privacy: .public) usingEngine=\(player.isUsingEngine, privacy: .public)")
+        self.knownDuration = knownDuration
         player.currentStreamURL = url
         player.nowPlaying.configureRemoteCommands()
         player.stopEngine()
 
-        playerItem?.removeObserver(player, forKeyPath: #keyPath(AVPlayerItem.status))
+        // NOTE: the status observer is block-based (`observe(\.status)` below,
+        // stored in `statusObserver` and invalidated here) — it is NOT a manual
+        // KVO `addObserver(player, forKeyPath:)`. A leftover
+        // `removeObserver(player, forKeyPath: .status)` used to live here and
+        // would trap ("not registered as an observer") whenever a previous
+        // AVPlayerItem existed — dormant until instant-start made EQ-on playback
+        // create AVPlayer items. Removed.
         if let obs = timeObserver { avPlayer?.removeTimeObserver(obs) }
         statusObserver?.invalidate()
         rateObserver?.invalidate()
@@ -67,13 +79,23 @@ final class AVPlayerPath {
                 guard let self, let player = self.player else { return }
                 if item.status == .failed {
                     log.error("AVPlayerItem error: \(item.error?.localizedDescription ?? "?", privacy: .public)")
-                    player.isPlaying = false
-                    player.playbackState = .idle
-                    player.currentStreamURL = nil
+                    // Let PlayerManager decide whether to re-resolve+retry (for a
+                    // streamed track) or surface the error.
+                    player.handleAVPlayerItemFailure(item.error)
                 } else if item.status == .readyToPlay {
                     let itemDuration = item.duration
                     if itemDuration.isNumeric && !itemDuration.isIndefinite {
-                        let resolved = self.correctedDuration(for: item) ?? itemDuration
+                        var resolved = self.correctedDuration(for: item)
+                        // The track-vs-container heuristic misses the case where
+                        // BOTH are doubled (DASH song + equal silence). When the
+                        // backend gave us the true length and the container is
+                        // materially longer, trust the backend and cap there.
+                        if let known = self.knownDuration, known > 0 {
+                            let itemSec = CMTimeGetSeconds(itemDuration)
+                            if itemSec > known * 1.1 {
+                                resolved = CMTime(seconds: known, preferredTimescale: 600)
+                            }
+                        }
                         player.duration = CMTimeGetSeconds(resolved)
                         if CMTimeCompare(resolved, itemDuration) != 0 {
                             self.playerItem?.forwardPlaybackEndTime = resolved
