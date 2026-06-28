@@ -12,7 +12,6 @@ struct MoreView: View {
     @State private var showDeletePlaylistsAlert = false
     @State private var showClearCacheAlert = false
     @State private var showClearHistoryAlert = false
-    @State private var showClearEQCacheAlert = false
 
     private let appVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     private var tokens: DesignTokens { themeManager.tokens }
@@ -55,15 +54,6 @@ struct MoreView: View {
             }
         } message: {
             Text("This will clear all cached images and data.")
-        }
-        .alert("Clear EQ Audio Cache", isPresented: $showClearEQCacheAlert) {
-            Button("Cancel", role: .cancel) {}
-            Button("Clear", role: .destructive) {
-                Haptics.warning()
-                playerManager.clearEQCache()
-            }
-        } message: {
-            Text("Deletes cached audio files used when EQ is enabled. Next EQ playback will re-download from the network.")
         }
         .alert("Clear All Favorites", isPresented: $showClearFavoritesAlert) {
             Button("Cancel", role: .cancel) {}
@@ -166,16 +156,6 @@ struct MoreView: View {
                     showClearCacheAlert = true
                 } label: {
                     row(icon: "trash.slash", iconColor: .orange, title: "Clear Image / Data Cache", isButton: true)
-                }
-                .buttonStyle(.plain)
-
-                Divider().background(tokens.hairline).padding(.leading, 56)
-
-                Button {
-                    Haptics.warning()
-                    showClearEQCacheAlert = true
-                } label: {
-                    row(icon: "waveform.slash", iconColor: .red, title: "Clear EQ Audio Cache", isButton: true)
                 }
                 .buttonStyle(.plain)
 

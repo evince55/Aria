@@ -55,34 +55,15 @@ struct MiniPlayerView: View {
 
     @ViewBuilder
     private var subtitle: some View {
-        if case .preparingDownload(let progress) = playerManager.playbackState {
-            HStack(spacing: 6) {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .tint(.secondary)
-                Text("Preparing…")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
-        } else {
-            Text(playerManager.currentTrack?.artist ?? "")
-                .font(.system(size: 11))
-                .lineLimit(1)
-                .foregroundColor(.secondary)
-        }
+        Text(playerManager.currentTrack?.artist ?? "")
+            .font(.system(size: 11))
+            .lineLimit(1)
+            .foregroundColor(.secondary)
     }
 
     @ViewBuilder
     private var trailingButton: some View {
-        if case .preparingDownload = playerManager.playbackState {
-            // No transport control while the engine is still downloading
-            // — tapping play would race the in-flight download and
-            // produce no audible difference.
-            ProgressView()
-                .progressViewStyle(.circular)
-                .controlSize(.small)
-                .frame(width: 40, height: 40)
-        } else {
+        Group {
             Button {
                 playerManager.togglePlayPause()
             } label: {

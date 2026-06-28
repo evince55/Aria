@@ -44,11 +44,10 @@ final class AVPlayerPath {
 
     func play(url: URL, knownDuration: TimeInterval? = nil) {
         guard let player else { return }
-        log.notice("playNative url=\(url.lastPathComponent, privacy: .public) replacingExistingPlayer=\(self.avPlayer != nil, privacy: .public) usingEngine=\(player.isUsingEngine, privacy: .public)")
+        log.notice("playNative url=\(url.lastPathComponent, privacy: .public) replacingExistingPlayer=\(self.avPlayer != nil, privacy: .public)")
         self.knownDuration = knownDuration
         player.currentStreamURL = url
         player.nowPlaying.configureRemoteCommands()
-        player.stopEngine()
 
         // NOTE: the status observer is block-based (`observe(\.status)` below,
         // stored in `statusObserver` and invalidated here) — it is NOT a manual
@@ -130,7 +129,6 @@ final class AVPlayerPath {
             pendingSeek = nil
         }
         avPlayer?.play()
-        player.isUsingEngine = false
     }
 
     // MARK: - EQ (real-time tap)

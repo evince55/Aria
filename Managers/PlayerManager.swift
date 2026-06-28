@@ -34,11 +34,6 @@ final class PlayerManager: NSObject, ObservableObject {
         case playing
         case paused
         case ended
-        /// Engine path is downloading the source stream to `EQCache`
-        /// before the first buffer can be scheduled. `progress` is in
-        /// `0.0...1.0`; an indeterminate download (no `Content-Length`
-        /// from the server) reports `0` until completion.
-        case preparingDownload(progress: Double)
     }
 
     enum RepeatMode: Int, CaseIterable {
@@ -94,31 +89,10 @@ final class PlayerManager: NSObject, ObservableObject {
     /// Refill the radio queue once it drops to this many upcoming tracks.
     private let radioRefillThreshold = 4
 
-    // MARK: - Engine path
-
-    private var engine: AVAudioEngine?
-    private var engineNode: AVAudioPlayerNode?
-    private var eqUnit: AVAudioUnitEQ?
-    private var scheduleGeneration: Int = 0
-    /// Absolute track position (seconds) the engine's AVAssetReader was told
-    /// to start from. The AVAudioPlayerNode's own sample clock always restarts
-    /// at 0 on each (re)start, so `pollEngineTime` adds this offset to recover
-    /// the true position — without it the seek bar desyncs from the audio by
-    /// exactly the seek amount.
-    private var engineSeekOffset: TimeInterval = 0
-
     // MARK: - Playback control
 
-    private var timeDisplayLink: CADisplayLink?
     var seekTarget: TimeInterval?
-
-    var isUsingEngine = false
-    private var switchingToEngine = false
-    private var pendingEngineSwitch = false
     var currentStreamURL: URL?
-    private var downloadedFileURL: URL?
-    private var downloadTask: Task<Void, Never>?
-    private var isStartingEngine = false
     var playGeneration = 0
 
     // MARK: - Init / deinit
@@ -178,8 +152,6 @@ final class PlayerManager: NSObject, ObservableObject {
     }
 
     deinit {
-        timeDisplayLink?.invalidate()
-        downloadTask?.cancel()
         NotificationCenter.default.removeObserver(self)
         let c = MPRemoteCommandCenter.shared()
         c.playCommand.removeTarget(nil)
@@ -260,7 +232,7 @@ final class PlayerManager: NSObject, ObservableObject {
     private func playStreamed(track: Track) {
         playGeneration += 1
         let gen = playGeneration
-        log.notice("play track=\(track.id, privacy: .public) gen=\(gen) prevPlayerAlive=\(self.avPlayerPath?.avPlayer != nil, privacy: .public) prevUsingEngine=\(self.isUsingEngine, privacy: .public)")
+        log.notice("play track=\(track.id, privacy: .public) gen=\(gen) prevPlayerAlive=\(self.avPlayerPath?.avPlayer != nil, privacy: .public)")
         nowPlaying.activateAudioSession()
 
         currentTrack = track
@@ -508,10 +480,6 @@ final class PlayerManager: NSObject, ObservableObject {
         play(next)
     }
 
-    func clearEQCache() {
-        EQCache.shared.clear()
-    }
-
     // MARK: - Network
 
     /// Kicks off a `/api/play?video_id=...` request and dispatches the
@@ -526,25 +494,10 @@ final class PlayerManager: NSObject, ObservableObject {
     /// per play so a genuinely dead track surfaces an error instead of looping.
     private var currentVideoID: String?
     private var didRetryResolve = false
-    /// Background "prepare the EQ engine and swap to it" task for the instant-
-    /// start hybrid (AVPlayer plays immediately; the engine takes over once its
-    /// file is downloaded). Cancelled on any new play/skip.
-    private var engineSwapTask: Task<Void, Never>?
-    /// Debounce before an instant-start engine swap kicks off its download, so
-    /// tracks you skip straight past never trigger a server-side download.
-    private let engineSwapDebounce: UInt64 = 1_500_000_000  // 1.5s
 
-    /// Resolves and starts a streamed track.
-    ///
-    /// `allowInstantStart` is set by the initial-play path (playStreamed): with
-    /// EQ on, rather than blocking on /api/play's full download, we start the
-    /// AVPlayer instantly from the direct /api/resolve URL and prepare the EQ
-    /// engine in the background (see `prepareEngineSwap`). The toggle/seek
-    /// callers leave it false and go straight to the engine as before.
     /// Resolves a streamed track to a direct URL and plays it instantly via
     /// AVPlayer. EQ (if on) is applied by the real-time tap inside `AVPlayerPath`
-    /// — no engine, no download. Local-file EQ still uses the engine (migrating
-    /// to the tap in a later phase).
+    /// — one path for streamed and local, no engine, no download.
     private func fetchStreamURL(for videoID: String, generation: Int) {
         streamTask?.cancel()
         streamTask = Task { @MainActor [weak self] in
@@ -572,64 +525,9 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
-    /// Instant-start hybrid: AVPlayer is already playing the direct URL; here we
-    /// fetch + cache the engine file in the background and swap to the EQ engine
-    /// at the current position once it's ready. A short debounce means tracks
-    /// you skip straight past never trigger the (server-side) download.
-    private func prepareEngineSwap(videoID: String, generation: Int, debounce: Bool = true) {
-        engineSwapTask?.cancel()
-        engineSwapTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-
-            // Debounce only on the initial-play path (skip-through protection).
-            // A deliberate EQ toggle wants the engine prepped immediately.
-            if debounce {
-                try? await Task.sleep(nanoseconds: self.engineSwapDebounce)
-            }
-            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { self.switchingToEngine = false; return }
-
-            // /api/play resolves to the cache-backed stream URL (server-side
-            // download); we then ensure a local copy for the engine.
-            let playURL: URL
-            do {
-                playURL = try await self.streamResolver.stream(for: videoID)
-            } catch {
-                self.switchingToEngine = false
-                return  // engine prep failed — AVPlayer keeps playing (no EQ).
-            }
-            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { self.switchingToEngine = false; return }
-
-            let cacheURL = EQCache.shared.cacheURL(for: playURL)
-            if !FileManager.default.fileExists(atPath: cacheURL.path) {
-                do {
-                    let downloadedURL = try await self.urlSession.downloadWithProgress(from: playURL, onProgress: { _ in })
-                    let dir = cacheURL.deletingLastPathComponent()
-                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                    if FileManager.default.fileExists(atPath: cacheURL.path) {
-                        try FileManager.default.removeItem(at: cacheURL)
-                    }
-                    try FileManager.default.moveItem(at: downloadedURL, to: cacheURL)
-                } catch {
-                    self.switchingToEngine = false
-                    return  // download failed/cancelled — AVPlayer keeps playing.
-                }
-            }
-            guard !Task.isCancelled, generation == self.playGeneration, self.eq.isEnabled else { self.switchingToEngine = false; return }
-
-            // Hand off AVPlayer -> engine at the current position.
-            log.notice("engine swap gen=\(generation, privacy: .public) at \(self.currentTime, privacy: .public)s")
-            self.currentStreamURL = cacheURL
-            self.seekTarget = self.currentTime
-            self.avPlayerPath.stop()
-            self.startEngine(with: cacheURL)
-        }
-    }
-
     private func handleFetchError(_ error: Error? = nil) {
         isPlaying = false
         playbackState = .idle
-        switchingToEngine = false
-        isStartingEngine = false
         if let error {
             playerError = .streamFailed(error.localizedDescription)
         }
@@ -641,7 +539,7 @@ final class PlayerManager: NSObject, ObservableObject {
     /// — turning the "switch back and forth until it works" dance into an
     /// automatic recovery.
     func handleAVPlayerItemFailure(_ error: Error?) {
-        if let videoID = currentVideoID, !didRetryResolve, !isUsingEngine {
+        if let videoID = currentVideoID, !didRetryResolve {
             didRetryResolve = true
             log.notice("AVPlayer item failed; re-resolving \(videoID, privacy: .public) once")
             playGeneration += 1
@@ -673,422 +571,9 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Engine path (with EQ)
-
-    private func downloadAndPlayEngine(url: URL) {
-        currentStreamURL = url
-
-        // Local files (imported via the Library tab) don't need a
-        // download — skip straight to the engine.
-        if url.isFileURL {
-            playbackState = .loading
-            startEngine(with: url)
-            return
-        }
-
-        let cacheURL = EQCache.shared.cacheURL(for: url)
-        let cached = FileManager.default.fileExists(atPath: cacheURL.path)
-        log.notice("downloadAndPlayEngine: cache=\(cached ? "hit" : "miss", privacy: .public) path=\(cacheURL.path, privacy: .public)")
-        if cached {
-            playbackState = .loading
-            startEngine(with: cacheURL)
-            return
-        }
-
-        playbackState = .preparingDownload(progress: 0)
-        downloadTask?.cancel()
-        let streamURL = url
-        let targetCacheURL = cacheURL
-        downloadTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let downloadedURL = try await self.urlSession.downloadWithProgress(
-                    from: streamURL,
-                    onProgress: { progress in
-                        Task { @MainActor [weak self] in
-                            self?.playbackState = .preparingDownload(progress: progress)
-                        }
-                    }
-                )
-                let cacheDir = targetCacheURL.deletingLastPathComponent()
-                try FileManager.default.createDirectory(at: cacheDir, withIntermediateDirectories: true)
-                if FileManager.default.fileExists(atPath: targetCacheURL.path) {
-                    try FileManager.default.removeItem(at: targetCacheURL)
-                }
-                try FileManager.default.moveItem(at: downloadedURL, to: targetCacheURL)
-                self.startEngine(with: targetCacheURL)
-            } catch is CancellationError {
-                // Newer play()/stop arrived; nothing to do.
-            } catch let urlError as URLError where urlError.code == .cancelled {
-                // URLSession.bytes throws URLError(.cancelled) when the
-                // wrapping Task is cancelled. Treat as a no-op.
-            } catch {
-                log.error("Download error: \(error.localizedDescription, privacy: .public)")
-                self.playAVPlayer(url: streamURL)
-            }
-        }
-    }
-
-    private func startEngine(with fileURL: URL) {
-        guard !isStartingEngine else { return }
-        isStartingEngine = true
-        downloadedFileURL = fileURL
-
-        let asset = AVURLAsset(url: fileURL)
-        guard let audioTrack = asset.tracks(withMediaType: .audio).first else {
-            isStartingEngine = false
-            fallbackToPlayer(fileURL: fileURL)
-            return
-        }
-
-        nowPlaying.configureRemoteCommands()
-        setupEngine()
-
-        guard let engine, let node = engineNode, let eqUnit = eqUnit else {
-            isStartingEngine = false
-            fallbackToPlayer(fileURL: fileURL)
-            return
-        }
-
-        duration = CMTimeGetSeconds(asset.duration)
-        if duration == 0 || duration.isNaN {
-            duration = CMTimeGetSeconds(audioTrack.timeRange.duration)
-        }
-
-        let format: AudioStreamBasicDescription? = {
-            guard let any = audioTrack.formatDescriptions.first,
-                  let ptr = CMAudioFormatDescriptionGetStreamBasicDescription(any as! CMAudioFormatDescription) else { return nil }
-            return ptr.pointee
-        }()
-
-        let sampleRate = format?.mSampleRate ?? 44100
-        let channels = format?.mChannelsPerFrame ?? 2
-
-        let bufferFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: AVAudioChannelCount(channels), interleaved: false)
-            ?? AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: AVAudioChannelCount(channels))!
-
-        // Reconnect the player node with the *source file's* format so the
-        // scheduled buffers match the node's output format. The engine is
-        // created once and reused across tracks, so a previous track's sample
-        // rate (or the nil-inferred hardware rate) can mismatch this track —
-        // scheduleBuffer then traps on
-        // `_outputFormat.sampleRate == buffer.format.sampleRate`. This is the
-        // most common AVAudioEngine crash and is hit hardest by hi-res local
-        // files (e.g. 96 kHz FLAC) whose rate differs from the 44.1/48 kHz
-        // default. The mainMixerNode handles conversion to the hardware rate.
-        node.stop()
-        engine.disconnectNodeOutput(node)
-        engine.disconnectNodeOutput(eqUnit)
-        engine.connect(node, to: eqUnit, format: bufferFormat)
-        engine.connect(eqUnit, to: engine.mainMixerNode, format: bufferFormat)
-
-        // AVLinearPCMBitDepthKey is REQUIRED whenever AVLinearPCMIsFloatKey is
-        // set: on-device `AVAssetReaderAudioMixOutput` throws
-        // NSInvalidArgumentException ("If one of AVLinearPCMIsFloatKey and
-        // AVLinearPCMBitDepthKey is specified, both must be specified") if it's
-        // missing. The simulator tolerates the omission; hardware does not.
-        // 32-bit float matches the .pcmFormatFloat32 bufferFormat above.
-        let outputSettings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
-            AVLinearPCMIsFloatKey: true,
-            AVLinearPCMBitDepthKey: 32,
-            AVLinearPCMIsNonInterleaved: true,
-            AVNumberOfChannelsKey: channels,
-            AVSampleRateKey: sampleRate,
-        ]
-
-        guard let reader = try? AVAssetReader(asset: asset) else {
-            isStartingEngine = false
-            fallbackToPlayer(fileURL: fileURL)
-            return
-        }
-
-        var startOffset: TimeInterval = 0
-        if let seek = seekTarget, seek > 0 {
-            let cmSeek = CMTime(seconds: seek, preferredTimescale: 600)
-            let remaining = CMTimeSubtract(asset.duration, cmSeek)
-            if CMTIME_IS_VALID(remaining) && CMTimeGetSeconds(remaining) > 0 {
-                reader.timeRange = CMTimeRange(start: cmSeek, duration: remaining)
-                startOffset = seek
-            }
-            seekTarget = nil
-        }
-        // Record where the reader actually starts so pollEngineTime can report
-        // an absolute position (0 for a fresh play, the seek point otherwise).
-        engineSeekOffset = startOffset
-
-        let readerOutput = AVAssetReaderAudioMixOutput(audioTracks: [audioTrack], audioSettings: outputSettings)
-        readerOutput.alwaysCopiesSampleData = false
-        reader.add(readerOutput)
-
-        guard reader.startReading() else {
-            isStartingEngine = false
-            fallbackToPlayer(fileURL: fileURL)
-            return
-        }
-
-        if !engine.isRunning {
-            do { try engine.start() } catch {
-                isStartingEngine = false
-                fallbackToPlayer(fileURL: fileURL)
-                return
-            }
-        }
-
-        scheduleGeneration += 1
-        let gen = scheduleGeneration
-
-        let scheduleQueue = DispatchQueue(label: "eq.schedule")
-
-        scheduleQueue.async { [weak self] in
-            guard let self else { return }
-            var lastBuffer: AVAudioPCMBuffer?
-            var didScheduleFirst = false
-
-            while reader.status == .reading {
-                if gen != self.scheduleGeneration { reader.cancelReading(); break }
-                guard let sampleBuffer = readerOutput.copyNextSampleBuffer() else {
-                    if reader.status == .completed || reader.status == .failed { break }
-                    Thread.sleep(forTimeInterval: 0.005)
-                    continue
-                }
-                guard let pcmBuffer = self.createPCMBuffer(from: sampleBuffer, format: bufferFormat) else { continue }
-
-                if !didScheduleFirst {
-                    didScheduleFirst = true
-                    DispatchQueue.main.async {
-                        guard gen == self.scheduleGeneration, self.isUsingEngine else { return }
-                        self.engineNode?.scheduleBuffer(pcmBuffer, completionHandler: nil)
-                        self.engineNode?.play()
-                        self.isPlaying = true
-                        self.playbackState = .playing
-                        // The "starting" phase is over once the first buffer is
-                        // playing. Leaving this true (as before) meant it stayed
-                        // set for the whole track, so seekEngine()'s restart hit
-                        // `guard !isStartingEngine` and bailed after it had already
-                        // stopped the node — seeking/skipping killed playback.
-                        self.isStartingEngine = false
-                        self.startTimeDisplayLink()
-                        self.nowPlaying.updateNowPlaying()
-                    }
-                } else {
-                    let toSchedule = lastBuffer
-                    lastBuffer = pcmBuffer
-                    DispatchQueue.main.async {
-                        guard gen == self.scheduleGeneration, self.isUsingEngine else { return }
-                        if let toSchedule = toSchedule {
-                            self.engineNode?.scheduleBuffer(toSchedule, completionHandler: nil)
-                        }
-                    }
-                }
-                Thread.sleep(forTimeInterval: 0.005)
-            }
-
-            if reader.status == .completed {
-                let finalBuffer = lastBuffer
-                let didStart = didScheduleFirst
-                DispatchQueue.main.async {
-                    guard gen == self.scheduleGeneration, self.isUsingEngine else { return }
-                    if let finalBuffer = finalBuffer, didStart {
-                        self.engineNode?.scheduleBuffer(finalBuffer, completionCallbackType: .dataPlayedBack) { _ in
-                            DispatchQueue.main.async {
-                                guard gen == self.scheduleGeneration else { return }
-                                self.isStartingEngine = false
-                                self.playerItemDidFinish()
-                            }
-                        }
-                    } else {
-                        self.isStartingEngine = false
-                        self.playerItemDidFinish()
-                    }
-                }
-            } else if reader.status == .failed {
-                log.error("Reader failed: \(reader.error?.localizedDescription ?? "?", privacy: .public)")
-                reader.cancelReading()
-                DispatchQueue.main.async {
-                    self.isStartingEngine = false
-                    self.fallbackToPlayer(fileURL: fileURL)
-                }
-            }
-        }
-
-        isUsingEngine = true
-        switchingToEngine = false
-    }
-
-    private func createPCMBuffer(from sampleBuffer: CMSampleBuffer, format: AVAudioFormat) -> AVAudioPCMBuffer? {
-        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
-        guard frameCount > 0 else { return nil }
-        guard let pcmBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)) else { return nil }
-        pcmBuffer.frameLength = AVAudioFrameCount(frameCount)
-
-        // Let CoreMedia copy the decoded PCM into the buffer's audioBufferList.
-        // The previous hand-rolled pointer arithmetic assumed the CMBlockBuffer
-        // was contiguous and planar with a channel count matching `format` —
-        // none of which is guaranteed. Non-contiguous block buffers, mono
-        // sources, or interleaved data all caused out-of-bounds reads (crash /
-        // corruption), most often on local FLAC/ALAC imports. This API handles
-        // contiguity and layout correctly per the sample buffer's own format.
-        let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(
-            sampleBuffer,
-            at: 0,
-            frameCount: Int32(frameCount),
-            into: pcmBuffer.mutableAudioBufferList
-        )
-        guard status == noErr else {
-            log.error("PCM copy failed: OSStatus \(status, privacy: .public)")
-            return nil
-        }
-        return pcmBuffer
-    }
-
-    private func applyBandsToEngine(_ bands: [Float]) {
-        for i in 0..<10 {
-            eqUnit?.bands[i].gain = bands[i]
-        }
-    }
-
-    private func setupEngine() {
-        guard engine == nil else {
-            applyBandsToEngine(eq.bands)
-            return
-        }
-
-        let eng = AVAudioEngine()
-        let node = AVAudioPlayerNode()
-        let eq = AVAudioUnitEQ(numberOfBands: 10)
-
-        for i in 0..<10 {
-            let f = eq.bands[i]
-            f.filterType = .parametric
-            f.frequency = PlayerManager.eqFrequencies[i]
-            f.bandwidth = 1.0
-            f.gain = self.eq.bands[i]
-            f.bypass = false
-        }
-
-        eng.attach(node)
-        eng.attach(eq)
-        eng.connect(node, to: eq, format: nil)
-        eng.connect(eq, to: eng.mainMixerNode, format: nil)
-
-        engine = eng
-        engineNode = node
-        eqUnit = eq
-    }
-
-    private func seekEngine(to time: TimeInterval) {
-        engineNode?.stop()
-        scheduleGeneration += 1
-        // This is a deliberate restart: clear the starting guard so the
-        // startEngine() call below isn't rejected by `guard !isStartingEngine`.
-        // The scheduleGeneration bump above already invalidates the prior
-        // schedule loop, so there's no double-start risk.
-        isStartingEngine = false
-
-        seekTarget = time
-        if let fileURL = downloadedFileURL {
-            playbackState = .loading
-            startEngine(with: fileURL)
-        } else if let track = currentTrack {
-            playGeneration += 1
-            let gen = playGeneration
-            playbackState = .loading
-            fetchStreamURL(for: track.id, generation: gen)
-        }
-    }
-
-    private func startTimeDisplayLink() {
-        timeDisplayLink?.invalidate()
-        timeDisplayLink = CADisplayLink(target: self, selector: #selector(pollEngineTime))
-        timeDisplayLink?.add(to: .main, forMode: .common)
-    }
-
-    @objc private func pollEngineTime() {
-        guard let node = engineNode, node.isPlaying,
-              let lastTime = node.lastRenderTime,
-              let playerTime = node.playerTime(forNodeTime: lastTime) else { return }
-        // playerTime.sampleTime is relative to the node's last start (always 0
-        // after a seek/restart); add the reader's start offset for the true
-        // absolute track position so the seek bar tracks the audio.
-        currentTime = engineSeekOffset + Double(playerTime.sampleTime) / playerTime.sampleRate
-        nowPlaying.updateNowPlaying()
-    }
-
-    private func fallbackToPlayer(fileURL: URL) {
-        log.notice("Engine path failed, falling back to AVPlayer")
-        isUsingEngine = false
-        switchingToEngine = false
-        isStartingEngine = false
-        stopEngine()
-        avPlayerPath.stop()
-        let fallbackURL = currentStreamURL ?? fileURL
-        playAVPlayer(url: fallbackURL)
-    }
-
-    private func switchToEnginePlayback() {
-        guard !switchingToEngine, let track = currentTrack else { return }
-        pendingEngineSwitch = false
-        switchingToEngine = true
-
-        if let localURL = track.localFileURL {
-            // Local: the engine starts fast (no download), so a brief stop is
-            // fine. Restart at the current position.
-            playGeneration += 1
-            let gen = playGeneration
-            seekTarget = currentTime
-            avPlayerPath.stop()
-            DispatchQueue.main.async { [weak self] in
-                guard let self, gen == self.playGeneration else { return }
-                self.downloadAndPlayEngine(url: localURL)
-            }
-        } else {
-            // Streamed: DON'T stop AVPlayer. Prepare the engine in the
-            // background and swap at the current position once its file is
-            // ready, so turning EQ on keeps the music playing instead of going
-            // silent for the length of the download.
-            prepareEngineSwap(videoID: track.id, generation: playGeneration, debounce: false)
-        }
-    }
-
-    private func switchBackToPlayer() {
-        guard isUsingEngine else { return }
-        let pos = currentTime
-        seekTarget = pos
-        stopEngine()
-        isUsingEngine = false
-
-        guard let url = currentStreamURL else {
-            isPlaying = false
-            playbackState = .idle
-            return
-        }
-        playAVPlayer(url: url)
-    }
-
-    func stopEngine() {
-        scheduleGeneration += 1
-        timeDisplayLink?.invalidate()
-        timeDisplayLink = nil
-        engineNode?.stop()
-        engine?.stop()
-        engine = nil
-        engineNode = nil
-        eqUnit = nil
-    }
-
     private func stopAllPlayback() {
-        downloadTask?.cancel()
-        downloadTask = nil
-        engineSwapTask?.cancel()
-        engineSwapTask = nil
         seekTarget = nil
-        scheduleGeneration += 1
-        stopEngine()
         avPlayerPath.stop()
         avPlayerPath.pendingSeek = nil
-        isUsingEngine = false
-        timeDisplayLink?.invalidate()
-        timeDisplayLink = nil
     }
 }

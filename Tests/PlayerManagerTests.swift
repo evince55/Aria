@@ -21,14 +21,6 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
     /// Test sets this to control the response. Used by `StreamResolver`.
     var dataFromHandler: ((URL) async throws -> (Data, URLResponse))?
 
-    /// Closure invoked for each `downloadWithProgress(from:onProgress:)`
-    /// call. Test sets this to simulate a download and (optionally)
-    /// report progress values to the engine path.
-    /// - Returns the on-disk URL where the "downloaded" file should live.
-    /// - Reports progress via the supplied closure; the closure is
-    ///   `@Sendable` so the test may invoke it from any context.
-    var downloadHandler: ((URL, @escaping @Sendable (Double) -> Void) async throws -> URL)?
-
     @discardableResult
     func dataTask(
         with url: URL,
@@ -53,16 +45,6 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
         return (Data(), URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil))
     }
 
-    func downloadWithProgress(
-        from url: URL,
-        onProgress: @escaping @Sendable (Double) -> Void
-    ) async throws -> URL {
-        recordedRequests.append(RecordedRequest(url: url, completionHandler: { _, _, _ in }))
-        guard let handler = downloadHandler else {
-            throw URLError(.cancelled)
-        }
-        return try await handler(url, onProgress)
-    }
 }
 
 final class MockURLSessionDataTask: URLSessionDataTaskProtocol, @unchecked Sendable {
@@ -258,42 +240,10 @@ final class PlayerManagerTests: XCTestCase {
         XCTAssertFalse(player.eq.isEnabled)
     }
 
-    func test_ClearEQCacheDoesNotCrash() {
-        player.clearEQCache()
-    }
-
-    func test_PlayWithEQEnabledRecordsRequest() async {
-        // With EQ on, the engine path requires a download. The first play()
-        // should record at least one network request.
-        player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        mockSession.dataFromHandler = { url in
-            if url.absoluteString.contains("/api/play") {
-                return (
-                    Data(#"{"url":"/api/stream/abc.m4a","cached":false}"#.utf8),
-                    HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
-                )
-            } else {
-                return (
-                    Data(),
-                    HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
-                )
-            }
-        }
-        // Default downloadHandler in MockURLSession returns an empty
-        // temp file; startEngine will then fail to find an audio track
-        // and fall back to AVPlayer. The test only cares that a request
-        // was recorded.
-        player.play(makeTrack(id: "abc", title: "A"))
-        try? await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertGreaterThan(self.mockSession.recordedRequests.count, 0)
-    }
-
-    func test_PlayWithEQEnabledStartsInstantlyAndDefersEngineDownload() async {
-        // Instant-start hybrid: even with EQ on, the initial play resolves the
-        // direct URL and starts AVPlayer immediately, deferring the engine
-        // download behind a debounce. So a network request is recorded, but
-        // .preparingDownload must NOT appear on the initial-play path (it would
-        // mean we blocked on a full download before any audio).
+    func test_PlayWithEQEnabled_resolvesAndStartsAVPlayer() async {
+        // With EQ on, playback still resolves the direct URL and starts AVPlayer
+        // immediately — EQ is applied by the real-time tap, no download. The
+        // first play() should record a resolve request for the track.
         player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         mockSession.dataFromHandler = { url in
             (
@@ -301,51 +251,30 @@ final class PlayerManagerTests: XCTestCase {
                 HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
             )
         }
-
-        var states: [PlayerManager.PlaybackState] = []
-        let cancellable = player.$playbackState.sink { states.append($0) }
-        defer { cancellable.cancel() }
-
         player.play(makeTrack(id: "abc", title: "A"))
-        // Well under the 1.5s engine-swap debounce.
-        try? await Task.sleep(nanoseconds: 300_000_000)
-
+        try? await Task.sleep(nanoseconds: 200_000_000)
         XCTAssertTrue(
             self.mockSession.recordedRequests.contains(where: { $0.url.absoluteString.contains("video_id=abc") }),
             "expected a resolve request for the played track"
         )
-        XCTAssertFalse(
-            states.contains(where: {
-                if case .preparingDownload = $0 { return true }
-                return false
-            }),
-            "instant-start must not block on .preparingDownload, got \(states)"
-        )
     }
 
-    func test_PlayWithEQEnabledCancelledDownloadDoesNotCrash() async {
-        // Sanity: a fast play()→play() sequence should not crash even
-        // if the first download is in flight. The first download task
-        // is cancelled and the closure exits via CancellationError;
-        // the second play() starts a fresh download.
+    func test_PlayWithEQEnabled_rapidSkipDoesNotCrash() async {
+        // Sanity: a fast play()→play() sequence with EQ on should not crash;
+        // the first resolve is cancelled and the second play() starts fresh.
         player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         mockSession.dataFromHandler = { url in
-            (
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            return (
                 Data(#"{"url":"/api/stream/abc.m4a","cached":false}"#.utf8),
                 HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!
             )
         }
-        mockSession.downloadHandler = { _, _ in
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            throw URLError(.cancelled)
-        }
         player.play(makeTrack(id: "abc", title: "A"))
-        // Let the stream resolution + download task start.
         try? await Task.sleep(nanoseconds: 50_000_000)
         player.play(makeTrack(id: "def", title: "B"))
         try? await Task.sleep(nanoseconds: 100_000_000)
-        // If we got here without a crash, the test passes.
-        XCTAssertTrue(true)
+        XCTAssertTrue(true)  // reached here without crashing
     }
 
     // MARK: - Lifecycle (2)
@@ -455,11 +384,9 @@ final class PlayerManagerTests: XCTestCase {
     }
 
     func test_enableEQDuringLocalPlayback_doesNotHitBackend() async {
-        // Regression: when a local file is playing with EQ off (AVPlayer
-        // path), enabling the EQ must route to the local engine path
-        // via downloadAndPlayEngine, NOT call fetchStreamURL which would
-        // hit the YouTube backend with an invalid video_id like
-        // "local:<UUID>".
+        // Regression: enabling EQ on a playing local file must apply EQ via
+        // the AVPlayer tap, NOT call fetchStreamURL (which would hit the
+        // YouTube backend with an invalid video_id like "local:<UUID>").
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("local_\(UUID().uuidString).mp3")
         try? Data(repeating: 0, count: 100).write(to: url)
@@ -483,7 +410,7 @@ final class PlayerManagerTests: XCTestCase {
         XCTAssertEqual(mockSession.recordedRequests.count, beforePlay,
                        "initial local playback with EQ off should not hit the backend")
 
-        // Enable EQ — this is the trigger for switchToEnginePlayback.
+        // Enable EQ — attaches the tap to the local item; must not hit the net.
         let beforeEnable = mockSession.recordedRequests.count
         player.applyEQPreset([1, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         try? await Task.sleep(nanoseconds: 100_000_000)
