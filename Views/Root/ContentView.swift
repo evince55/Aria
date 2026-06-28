@@ -100,6 +100,8 @@ struct ContentView: View {
             }
         }
         .onAppear {
+            // Connect favorites so the lock-screen Like command works.
+            playerManager.configureFavorites(favoritesManager)
             if ProcessInfo.processInfo.arguments.contains("--debug-fake-track")
                 || UserDefaults.standard.bool(forKey: "debug_fake_track") {
                 playerManager.loadDebugFakeTrack()

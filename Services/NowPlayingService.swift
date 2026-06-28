@@ -16,6 +16,10 @@ final class NowPlayingService {
     private var remoteCommandsConfigured = false
     private var artworkTask: Task<Void, Never>?
 
+    /// Wired by `PlayerManager.configureFavorites(_:)` so the lock-screen Like
+    /// command can toggle the current track's favorite state.
+    weak var favorites: FavoritesManager?
+
     init(player: PlayerManager, urlSession: URLSessionProtocol) {
         self.player = player
         self.urlSession = urlSession
@@ -47,6 +51,19 @@ final class NowPlayingService {
             info[MPMediaItemPropertyArtwork] = art
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        refreshCommandState()
+    }
+
+    /// Keeps the next/prev/like remote commands in sync with queue, history,
+    /// and favorite state. Cheap; called on every Now Playing update.
+    func refreshCommandState() {
+        guard remoteCommandsConfigured, let player else { return }
+        let c = MPRemoteCommandCenter.shared()
+        c.nextTrackCommand.isEnabled = player.hasNext
+        c.previousTrackCommand.isEnabled = player.hasPrevious
+        if let track = player.currentTrack {
+            c.likeCommand.isActive = favorites?.isFavorite(track) ?? false
+        }
     }
 
     func loadArtwork(for track: Track) {
@@ -94,6 +111,23 @@ final class NowPlayingService {
         }
         c.nextTrackCommand.addTarget { [weak self] _ in self?.player?.nextTrack(); return .success }
         c.previousTrackCommand.addTarget { [weak self] _ in self?.player?.previousTrack(); return .success }
+
+        // Like / Favorite — toggles the current track in FavoritesManager.
+        let like = c.likeCommand
+        like.isEnabled = true
+        like.localizedTitle = "Favorite"
+        like.localizedShortTitle = "Favorite"
+        like.addTarget { [weak self] _ in
+            guard let self,
+                  let track = self.player?.currentTrack,
+                  let favorites = self.favorites else { return .commandFailed }
+            favorites.toggle(track)
+            self.refreshCommandState()
+            return .success
+        }
+
+        // Initial availability reflects the current state.
+        refreshCommandState()
     }
 
     func activateAudioSession() {

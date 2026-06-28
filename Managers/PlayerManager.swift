@@ -25,6 +25,10 @@ final class PlayerManager: NSObject, ObservableObject {
     @Published var repeatMode: RepeatMode = .off
     @Published var queue: [Track] = []
     @Published var playerError: PlayerError?
+    /// When a sleep timer is armed, the wall-clock instant it will fire.
+    /// `nil` when no timer is active. The view layer observes this to show a
+    /// live countdown.
+    @Published private(set) var sleepTimerEndDate: Date?
 
     let eq: EQController
 
@@ -95,6 +99,22 @@ final class PlayerManager: NSObject, ObservableObject {
     var currentStreamURL: URL?
     var playGeneration = 0
 
+    /// Tracks played before the current one, oldest first. Powers real
+    /// Previous-track navigation. Capped to avoid unbounded growth.
+    private var playHistory: [Track] = []
+    private let maxPlayHistory = 200
+    /// Don't pop history when the user is well into a track — Previous then
+    /// restarts the current track, matching standard player behaviour.
+    private let previousRestartThreshold: TimeInterval = 3
+
+    /// Snapshot of the upcoming queue in its original (unshuffled) order,
+    /// kept only while `isShuffled` is on so the toggle is reversible.
+    private var unshuffledQueue: [Track]?
+
+    /// Pending sleep-timer task; cancelled when the timer is re-armed or
+    /// turned off.
+    private var sleepTimerTask: Task<Void, Never>?
+
     // MARK: - Init / deinit
 
     override init() {
@@ -160,6 +180,8 @@ final class PlayerManager: NSObject, ObservableObject {
         c.changePlaybackPositionCommand.removeTarget(nil)
         c.nextTrackCommand.removeTarget(nil)
         c.previousTrackCommand.removeTarget(nil)
+        c.likeCommand.removeTarget(nil)
+        sleepTimerTask?.cancel()
     }
 
     // MARK: - Audio session notifications
@@ -212,10 +234,29 @@ final class PlayerManager: NSObject, ObservableObject {
     }
 
     func play(_ track: Track) {
+        // Record the track we're leaving so Previous can return to it. Skip
+        // when re-playing the same track (e.g. retry/repeat).
+        if let leaving = currentTrack, leaving.id != track.id {
+            recordHistory(leaving)
+        }
+        startPlayback(track)
+    }
+
+    /// Starts playback of `track` without touching the play-history stack.
+    /// Used by `previousTrack()` and Repeat-All looping, which manage history
+    /// themselves.
+    private func startPlayback(_ track: Track) {
         if let localURL = track.localFileURL {
             playLocal(track: track, fileURL: localURL)
         } else {
             playStreamed(track: track)
+        }
+    }
+
+    private func recordHistory(_ track: Track) {
+        playHistory.append(track)
+        if playHistory.count > maxPlayHistory {
+            playHistory.removeFirst(playHistory.count - maxPlayHistory)
         }
     }
 
@@ -337,7 +378,33 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
-    func toggleShuffle() { isShuffled.toggle() }
+    /// Toggles shuffle over the *upcoming* queue. Turning it on randomises the
+    /// queue (snapshotting the original order); turning it off restores that
+    /// order, dropping any tracks already consumed while shuffled.
+    func toggleShuffle() {
+        isShuffled.toggle()
+        if isShuffled {
+            unshuffledQueue = queue
+            queue = queue.shuffled()
+        } else if let original = unshuffledQueue {
+            let remaining = Set(queue.map(\.id))
+            queue = original.filter { remaining.contains($0.id) }
+            unshuffledQueue = nil
+        }
+        nowPlaying.updateNowPlaying()
+    }
+
+    /// Installs `tracks` as the upcoming queue, honouring the current shuffle
+    /// state so a freshly-seeded collection plays shuffled when shuffle is on.
+    private func installQueue(_ tracks: [Track]) {
+        if isShuffled {
+            unshuffledQueue = tracks
+            queue = tracks.shuffled()
+        } else {
+            unshuffledQueue = nil
+            queue = tracks
+        }
+    }
 
     func cycleRepeatMode() {
         switch repeatMode {
@@ -348,7 +415,7 @@ final class PlayerManager: NSObject, ObservableObject {
     }
 
     func nextTrack() {
-        if !queue.isEmpty {
+        if !queue.isEmpty || repeatMode == .all {
             playNextInQueue()
         } else {
             seek(to: 0)
@@ -356,6 +423,58 @@ final class PlayerManager: NSObject, ObservableObject {
             isPlaying = false
             playbackState = .ended
         }
+    }
+
+    /// Whether a Next action can advance: either the queue has tracks, or
+    /// Repeat-All can loop back to the start. Drives the remote command's
+    /// enabled state.
+    var hasNext: Bool { !queue.isEmpty || repeatMode == .all }
+
+    /// Whether a Previous action can step back to an earlier track.
+    var hasPrevious: Bool { !playHistory.isEmpty }
+
+    // MARK: - Sleep timer
+
+    /// Arms (or cancels, for `.off`) the sleep timer for the given duration.
+    /// When it elapses, playback is paused. Call from the settings UI.
+    func startSleepTimer(_ duration: SleepTimerDuration) {
+        scheduleSleepTimer(after: duration.timeInterval)
+    }
+
+    /// Lower-level entry point taking a raw interval in seconds (or `nil`/<=0
+    /// to cancel). Exposed for testing with short intervals.
+    func scheduleSleepTimer(after interval: TimeInterval?) {
+        sleepTimerTask?.cancel()
+        guard let interval, interval > 0 else {
+            sleepTimerEndDate = nil
+            sleepTimerTask = nil
+            return
+        }
+        sleepTimerEndDate = Date().addingTimeInterval(interval)
+        sleepTimerTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+            guard let self, !Task.isCancelled else { return }
+            self.fireSleepTimer()
+        }
+    }
+
+    private func fireSleepTimer() {
+        sleepTimerEndDate = nil
+        sleepTimerTask = nil
+        if isPlaying {
+            pause()
+            nowPlaying.updateNowPlaying()
+        }
+    }
+
+    // MARK: - Favorites wiring
+
+    /// Connects a `FavoritesManager` so the lock-screen Like command can
+    /// toggle the current track's favorite state. Call once at launch.
+    func configureFavorites(_ favorites: FavoritesManager) {
+        nowPlaying.favorites = favorites
+        nowPlaying.configureRemoteCommands()
+        nowPlaying.updateNowPlaying()
     }
 
     /// Replaces the queue with `tracks` and starts playback at
@@ -381,7 +500,9 @@ final class PlayerManager: NSObject, ObservableObject {
         endRadio()
         let idx = max(0, min(startIndex, playable.count - 1))
         let upcoming = Array(playable.dropFirst(idx + 1))
-        queue = upcoming
+        // A fresh collection starts a new history lineage.
+        playHistory.removeAll()
+        installQueue(upcoming)
         play(playable[idx])
     }
 
@@ -433,44 +554,53 @@ final class PlayerManager: NSObject, ObservableObject {
         }
     }
 
-    /// TODO: Currently a no-op distinction — both branches restart the current
-    /// track. Replace with a real previous-track implementation that consults
-    /// a track history (i.e. the order tracks were played, not the queue).
-    /// For now the behaviour is "tap to restart the current track", which
-    /// matches what most lock-screen / control-center users expect.
+    /// Steps back to the actually-previously-played track using the play
+    /// history. When the user is more than a few seconds into the current
+    /// track, restarts it instead (standard transport behaviour). With no
+    /// history, restarts the current track.
     func previousTrack() {
-        seek(to: 0)
+        if currentTime > previousRestartThreshold {
+            seek(to: 0)
+            return
+        }
+        guard let previous = playHistory.popLast() else {
+            seek(to: 0)
+            return
+        }
+        // Put the track we're leaving back at the front of the queue so Next
+        // returns to it.
+        if let leaving = currentTrack {
+            queue.insert(leaving, at: 0)
+            if isShuffled { unshuffledQueue?.insert(leaving, at: 0) }
+        }
+        startPlayback(previous)
     }
 
     // MARK: - Queue
 
     func addToQueue(_ track: Track) {
         queue.append(track)
+        if isShuffled { unshuffledQueue?.append(track) }
     }
 
     func removeFromQueue(at index: Int) {
         guard queue.indices.contains(index) else { return }
-        queue.remove(at: index)
+        let removed = queue.remove(at: index)
+        unshuffledQueue?.removeAll { $0.id == removed.id }
     }
 
     func clearQueue() {
         queue.removeAll()
+        unshuffledQueue = nil
     }
 
     func playNextInQueue() {
         guard !queue.isEmpty else {
-            if repeatMode == .off {
-                isPlaying = false
-                playbackState = .ended
-                nowPlaying.updateNowPlaying()
-                return
-            }
-            if let track = currentTrack {
-                play(track)
-            }
+            advanceWithEmptyQueue()
             return
         }
         let next = queue.removeFirst()
+        unshuffledQueue?.removeAll { $0.id == next.id }
         radioSeen.insert(next.id)
         // Top up an endless radio queue before it runs dry, seeded from the
         // track we're about to play so the station evolves with the listening.
@@ -478,6 +608,32 @@ final class PlayerManager: NSObject, ObservableObject {
             refillRadio(from: next.id, replacing: false)
         }
         play(next)
+    }
+
+    /// Handles a Next action when the queue is empty, honouring the repeat
+    /// mode. Repeat-All re-seeds the queue from the tracks played this session
+    /// so the collection loops; Repeat-One restarts the current track; Off
+    /// ends playback.
+    private func advanceWithEmptyQueue() {
+        switch repeatMode {
+        case .off:
+            isPlaying = false
+            playbackState = .ended
+            nowPlaying.updateNowPlaying()
+        case .one:
+            if let track = currentTrack { startPlayback(track) }
+        case .all:
+            // The collection, in play order, is everything in history plus the
+            // track that just finished.
+            let collection = playHistory + (currentTrack.map { [$0] } ?? [])
+            guard collection.count > 1, let first = collection.first else {
+                if let track = currentTrack { startPlayback(track) }
+                return
+            }
+            playHistory.removeAll()
+            installQueue(Array(collection.dropFirst()))
+            play(first)
+        }
     }
 
     // MARK: - Network

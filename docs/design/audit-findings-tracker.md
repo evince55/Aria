@@ -6,6 +6,31 @@ Source: the initial multi-agent "ultracode" sweep (96 agents, ~4.4M tokens, 85 v
 
 Legend: ✅ done · 🟡 partial · ⬜ open. Severity from the original sweep. "Evidence" is the verifier's current-code justification.
 
+## Update 2026-06-28 — broken playback features fixed (`feat/playback-fixes`)
+
+Five advertised-but-dead playback features were implemented in
+`Managers/PlayerManager.swift`, `Services/NowPlayingService.swift`, and the
+player/settings views, with 13 new XCTest cases in `PlayerManagerTests`:
+
+- ✅ **Implement real shuffle** (was 🟡) — `toggleShuffle()` now shuffles the
+  upcoming queue and snapshots the original order so it's reversible;
+  `playSlice` honours the shuffle state on fresh collections.
+- ✅ **Implement Repeat-All** (was ⬜) — when the queue drains under
+  `repeatMode == .all`, it re-seeds from the tracks played this session and
+  loops.
+- ✅ **Add a play history so Previous-track works** (was ⬜) — a bounded
+  `playHistory` stack; `previousTrack()` steps back to the actual prior track
+  (or restarts when >3s in).
+- ✅ **Wire up the Sleep Timer** (was ⬜) — `startSleepTimer` schedules a pause
+  when the persisted duration elapses; the More screen shows a live countdown.
+- ✅ **Enable/disable next/prev remote commands + Like command** (were ⬜) —
+  `NowPlayingService` now toggles `nextTrackCommand`/`previousTrackCommand`
+  enabled-state via `hasNext`/`hasPrevious`, the previous command drives the
+  real history-based `previousTrack`, and a `likeCommand` toggles
+  `FavoritesManager`.
+- 🟡 **Real previous-track and gapless/crossfade transitions** (was ⬜) —
+  previous-track is now real; gapless/crossfade still open.
+
 ## Update 2026-06-28 — EQ tap rewrite merged
 
 The EQ playback path was rewritten from download-then-`AVAudioEngine` to a
@@ -63,7 +88,7 @@ resolves several findings the per-row tables below still list as open/partial:
 | 🟡 partial | high | M | Stream the EQ download to disk instead of buffering the whole file in RAM | Download half is fixed: URLSessionProtocols.swift:80-99 flushes 64KB chunks to a FileHandle, no full-file Data buffer. But the engine schedule loop (PlayerManager.swift:811-853) still races ahead with only 5ms sleeps, scheduling every decoded buffer onto AVAudioPlayerNode which retains all unplay… |
 | ⬜ open | medium | M | Make engine seek incremental instead of re-decoding (and re-fetching) from scratch | seekEngine (PlayerManager.swift:942-961) still stops the node, bumps scheduleGeneration, and calls startEngine, which builds a fresh AVAssetReader with a new timeRange (768-790). When downloadedFileURL is nil it still re-calls fetchStreamURL (956-959), a full network re-resolve on scrub. |
 | ⬜ open | medium | M | Bound the EQ audio cache — it grows without limit | EQCache.swift has no size cap, no LRU, no count limit — only clear() (40-46). Still keyed on SHA-256 of stream.absoluteString (33-35), which includes expiring googlevideo params, so re-resolves miss and duplicate. The extension-preservation change is unrelated to bounding. |
-| ⬜ open | medium | L | Implement real previous-track and gapless/crossfade transitions | previousTrack() is still just seek(to: 0) with a TODO acknowledging the no-op (PlayerManager.swift:500-507); no play-history stack exists (grep finds none). playNextInQueue still destructively removeFirst (537) and play() calls stopAllPlayback (272,302,1035) — hard cuts, no overlap/crossfade. |
+| 🟡 partial | medium | L | Implement real previous-track and gapless/crossfade transitions | previousTrack() is still just seek(to: 0) with a TODO acknowledging the no-op (PlayerManager.swift:500-507); no play-history stack exists (grep finds none). playNextInQueue still destructively removeFirst (537) and play() calls stopAllPlayback (272,302,1035) — hard cuts, no overlap/crossfade. |
 
 ## Backend — Cache & Reliability
 
@@ -158,8 +183,8 @@ resolves several findings the per-row tables below still list as open/partial:
 | ⬜ open | high | S | Stop mixing with other audio — a music player must interrupt/duck, not coexist | Still [.mixWithOthers]: AriaApp.swift:21-22 and NowPlayingService.swift:103; no routeSharingPolicy(.longFormAudio) anywhere. |
 | ⬜ open | high | XL | Add CarPlay support (CPNowPlayingTemplate + browsing) — major reach gap | grep for CarPlay/CPNowPlaying/CPTemplate returns nothing; find for *.entitlements returns empty in the worktree. |
 | 🟡 partial | high | M | Now Playing elapsed time freezes on the lock screen while backgrounded | updateNowPlaying() now sets Elapsed+Rate+Duration on most transitions (play/seek/togglePlayPause), giving the system an extrapolation anchor, but no MPNowPlayingInfoCenter.playbackState or MPNowPlayingInfoPropertyMediaType is set and pause() (PlayerManager.swift:343-351) never pushes an update. |
-| ⬜ open | medium | M | Disable/enable next/prev remote commands to match queue state, and remove the no-op previousTrack | NowPlayingService.swift:95-96 still addTargets next/prev with no .isEnabled; previousTrack() (PlayerManager.swift:505-507) is still a seek(to:0) no-op; no play-history stack, no changeRepeatMode/changeShuffleMode/skip commands. |
-| ⬜ open | medium | S | Wire a Like/Favorite remote command into Now Playing (data already exists) | NowPlayingService.configureRemoteCommands() (lines 82-97) registers no likeCommand/dislikeCommand and FavoritesManager is not injected into the service. |
+| ✅ done | medium | M | Disable/enable next/prev remote commands to match queue state, and remove the no-op previousTrack | NowPlayingService.swift:95-96 still addTargets next/prev with no .isEnabled; previousTrack() (PlayerManager.swift:505-507) is still a seek(to:0) no-op; no play-history stack, no changeRepeatMode/changeShuffleMode/skip commands. |
+| ✅ done | medium | S | Wire a Like/Favorite remote command into Now Playing (data already exists) | NowPlayingService.configureRemoteCommands() (lines 82-97) registers no likeCommand/dislikeCommand and FavoritesManager is not injected into the service. |
 | ⬜ open | medium | S | Interruption-ended resume uses togglePlayPause() and never re-activates the session | handleInterruption .ended still calls togglePlayPause() (PlayerManager.swift:206) with no activateAudioSession() re-activation and no wasPlayingBeforeInterruption guard. |
 | ⬜ open | medium | L | Add Siri/App Intents + Shortcuts so users can voice-control and automate Aria | grep for AppIntent/SiriKit/INPlayMedia/NSUserActivity/AppShortcutsProvider returns nothing across the worktree. |
 | ⬜ open | low | L | Add a Now Playing Live Activity and a home-screen widget | grep for WidgetKit/ActivityKit/LiveActivity/ActivityAttributes returns nothing; no widget extension target exists. |
@@ -182,10 +207,10 @@ resolves several findings the per-row tables below still list as open/partial:
 | Status | Sev | Effort | Finding | Evidence (current code) |
 |---|---|---|---|---|
 | ✅ done | critical | S | Make collections auto-fill the queue for continuous playback | All collection entry points now seed the queue: Search uses playRadio (SearchView.swift:240,338,370), Favorites uses playSlice (FavoritesView.swift:70,138), Playlists use playSlice (PlaylistDetailView.swift:128,137,205); playNextInQueue auto-advances (PlayerManager.swift:524-545). |
-| ⬜ open | high | M | Wire up the Sleep Timer (setting is persisted but never fires) | MoreView.swift:222 onChange only calls Haptics.selection()+settingsManager.save(); no scheduledTimer/asyncAfter/Task.sleep ever reads sleepTimer to pause playback — the setting still does nothing. |
-| ⬜ open | high | M | Implement Repeat-All (queue does not loop) | playNextInQueue on an empty queue with repeatMode != .off still only replays currentTrack (PlayerManager.swift:524-535); no original-collection is stored to re-seed and loop, and repeatIcon returns 'repeat' for both .off and .all (FullScreenPlayerView.swift:227-233). |
-| ⬜ open | high | M | Add a play history so Previous-track works | previousTrack() is still a no-op that just calls seek(to:0) with a TODO; no play-history stack exists in PlayerManager (PlayerManager.swift:500-507). |
-| 🟡 partial | high | M | Implement real shuffle (button currently does nothing) | 'Shuffle Play' buttons now call playSlice(tracks.shuffled()) (FavoritesView.swift:68-70, PlaylistDetailView.swift:135-137), but the in-player shuffle toggle is still just toggleShuffle(){isShuffled.toggle()} (PlayerManager.swift:404) and isShuffled is never read by playSlice/playNextInQueue, so t… |
+| ✅ done | high | M | Wire up the Sleep Timer (setting is persisted but never fires) | MoreView.swift:222 onChange only calls Haptics.selection()+settingsManager.save(); no scheduledTimer/asyncAfter/Task.sleep ever reads sleepTimer to pause playback — the setting still does nothing. |
+| ✅ done | high | M | Implement Repeat-All (queue does not loop) | playNextInQueue on an empty queue with repeatMode != .off still only replays currentTrack (PlayerManager.swift:524-535); no original-collection is stored to re-seed and loop, and repeatIcon returns 'repeat' for both .off and .all (FullScreenPlayerView.swift:227-233). |
+| ✅ done | high | M | Add a play history so Previous-track works | previousTrack() is still a no-op that just calls seek(to:0) with a TODO; no play-history stack exists in PlayerManager (PlayerManager.swift:500-507). |
+| ✅ done | high | M | Implement real shuffle (button currently does nothing) | 'Shuffle Play' buttons now call playSlice(tracks.shuffled()) (FavoritesView.swift:68-70, PlaylistDetailView.swift:135-137), but the in-player shuffle toggle is still just toggleShuffle(){isShuffled.toggle()} (PlayerManager.swift:404) and isShuffled is never read by playSlice/playNextInQueue, so t… |
 | ⬜ open | medium | M | Enable queue reordering and playlist reordering (drag to reorder) | QueueView still only has .onDelete and tap-to-play index 0 (QueueView.swift:90-130), no .onMove; PlaylistsManager has no move/reorder method (only create/delete/rename/add/removeTrack) and PlaylistDetailView has no .onMove. |
 | ⬜ open | medium | S | Add 'Save Queue as Playlist' and add-collection-to-queue | QueueView toolbar still only offers Done/Clear (QueueView.swift:29-43); no saveQueue/queueAsPlaylist action and no bulk 'add collection to queue / play next' anywhere — grep returns nothing. |
 | ⬜ open | medium | M | Add variable playback speed control | No rate/defaultRate is ever set and no AVAudioUnitTimePitch in the engine graph; AVPlayer .rate is only observed for isPlaying (AVPlayerPath.swift:61-66), and no speed picker exists in FullScreenPlayerView. |

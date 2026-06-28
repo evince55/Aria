@@ -15,6 +15,18 @@ enum SleepTimerDuration: String, CaseIterable {
     case min45 = "45 min"
     case hour1 = "1 hour"
     case hour2 = "2 hours"
+
+    /// The duration in seconds, or `nil` for `.off` (no timer).
+    var timeInterval: TimeInterval? {
+        switch self {
+        case .off:   return nil
+        case .min15: return 15 * 60
+        case .min30: return 30 * 60
+        case .min45: return 45 * 60
+        case .hour1: return 60 * 60
+        case .hour2: return 2 * 60 * 60
+        }
+    }
 }
 
 final class SettingsManager: ObservableObject {

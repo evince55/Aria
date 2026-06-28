@@ -189,9 +189,18 @@ struct MoreView: View {
             VStack(spacing: 0) {
                 HStack(spacing: DS.Spacing.md) {
                     iconBadge(systemName: "moon.zzz", color: tokens.accent)
-                    Text("Sleep Timer")
-                        .font(DS.Typography.body)
-                        .foregroundColor(tokens.textPrimary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Sleep Timer")
+                            .font(DS.Typography.body)
+                            .foregroundColor(tokens.textPrimary)
+                        if let end = playerManager.sleepTimerEndDate {
+                            TimelineView(.periodic(from: .now, by: 1)) { context in
+                                Text("Pausing in \(countdownString(until: end, now: context.date))")
+                                    .font(DS.Typography.caption)
+                                    .foregroundColor(tokens.accent)
+                            }
+                        }
+                    }
                     Spacer()
                     Picker("", selection: $settingsManager.sleepTimer) {
                         ForEach(SleepTimerDuration.allCases, id: \.self) { duration in
@@ -199,9 +208,10 @@ struct MoreView: View {
                         }
                     }
                     .tint(tokens.accent)
-                    .onChange(of: settingsManager.sleepTimer) { _ in
+                    .onChange(of: settingsManager.sleepTimer) { newValue in
                         Haptics.selection()
                         settingsManager.save()
+                        playerManager.startSleepTimer(newValue)
                     }
                 }
                 .padding(.horizontal, DS.Spacing.md)
@@ -350,6 +360,17 @@ struct MoreView: View {
         .padding(.horizontal, DS.Spacing.md)
         .padding(.vertical, DS.Spacing.md)
         .contentShape(Rectangle())
+    }
+
+    /// Formats the remaining time until `end` as `M:SS` (or `H:MM:SS`).
+    private func countdownString(until end: Date, now: Date) -> String {
+        let remaining = Int(max(0, end.timeIntervalSince(now)))
+        let h = remaining / 3600
+        let m = (remaining % 3600) / 60
+        let s = remaining % 60
+        return h > 0
+            ? String(format: "%d:%02d:%02d", h, m, s)
+            : String(format: "%d:%02d", m, s)
     }
 
     private func iconBadge(systemName: String, color: Color) -> some View {

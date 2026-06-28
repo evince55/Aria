@@ -478,6 +478,140 @@ final class PlayerManagerTests: XCTestCase {
         XCTAssertTrue(player.queue.isEmpty)
     }
 
+    // MARK: - Real shuffle
+
+    func test_Shuffle_preservesTrackSetAndIsReversible() {
+        let original = (1...12).map { makeTrack(id: "\($0)", title: "T\($0)") }
+        original.forEach { player.addToQueue($0) }
+        let originalIDs = player.queue.map(\.id)
+
+        player.toggleShuffle()
+        XCTAssertTrue(player.isShuffled)
+        XCTAssertEqual(Set(player.queue.map(\.id)), Set(originalIDs),
+                       "shuffle must preserve the set of upcoming tracks")
+
+        player.toggleShuffle()
+        XCTAssertFalse(player.isShuffled)
+        XCTAssertEqual(player.queue.map(\.id), originalIDs,
+                       "un-shuffling must restore the original order")
+    }
+
+    func test_Shuffle_unshuffleDropsAlreadyPlayedTracks() {
+        let original = (1...6).map { makeTrack(id: "\($0)", title: "T\($0)") }
+        original.forEach { player.addToQueue($0) }
+        player.toggleShuffle()
+        // Simulate two tracks being consumed off the shuffled queue.
+        player.queue.removeFirst(2)
+        let remaining = Set(player.queue.map(\.id))
+        player.toggleShuffle()
+        XCTAssertEqual(Set(player.queue.map(\.id)), remaining,
+                       "restored order must only contain still-upcoming tracks")
+    }
+
+    // MARK: - Repeat-All
+
+    func test_RepeatAll_reseedsQueueWhenItDrains() {
+        let a = makeTrack(id: "a", title: "A")
+        let b = makeTrack(id: "b", title: "B")
+        player.repeatMode = .all
+        player.playSlice([a, b], startIndex: 0)   // current=a, queue=[b]
+        player.playNextInQueue()                  // current=b, queue=[]
+        XCTAssertEqual(player.currentTrack?.id, "b")
+        player.playNextInQueue()                  // drained + repeat all -> loop to a
+        XCTAssertEqual(player.currentTrack?.id, "a")
+        XCTAssertEqual(player.queue.map(\.id), ["b"])
+    }
+
+    func test_RepeatOff_endsWhenQueueDrains() {
+        let a = makeTrack(id: "a", title: "A")
+        player.repeatMode = .off
+        player.playSlice([a], startIndex: 0)   // current=a, queue=[]
+        player.playNextInQueue()               // drained + repeat off -> ended
+        XCTAssertEqual(player.playbackState, .ended)
+        XCTAssertFalse(player.isPlaying)
+    }
+
+    // MARK: - Previous-track history
+
+    func test_PreviousTrack_returnsToPreviouslyPlayedTrack() {
+        let a = makeTrack(id: "a", title: "A")
+        let b = makeTrack(id: "b", title: "B")
+        player.playSlice([a, b], startIndex: 0)   // current=a, queue=[b]
+        player.playNextInQueue()                  // current=b, history=[a]
+        XCTAssertEqual(player.currentTrack?.id, "b")
+
+        player.previousTrack()                    // currentTime 0 -> go back to a
+        XCTAssertEqual(player.currentTrack?.id, "a")
+        XCTAssertEqual(player.queue.first?.id, "b",
+                       "the track we left should be put back at the front of the queue")
+    }
+
+    func test_PreviousTrack_restartsWhenPastThreshold() {
+        let a = makeTrack(id: "a", title: "A")
+        let b = makeTrack(id: "b", title: "B")
+        player.playSlice([a, b], startIndex: 0)
+        player.playNextInQueue()                  // current=b, history=[a]
+        player.currentTime = 30                   // well into the track
+        player.previousTrack()                    // should restart b, not pop history
+        XCTAssertEqual(player.currentTrack?.id, "b")
+    }
+
+    func test_PreviousTrack_withNoHistoryRestartsCurrent() {
+        let a = makeTrack(id: "a", title: "A")
+        player.play(a)
+        player.previousTrack()
+        XCTAssertEqual(player.currentTrack?.id, "a")
+    }
+
+    // MARK: - hasNext / hasPrevious (remote command availability)
+
+    func test_hasNextAndHasPrevious_reflectQueueAndHistory() {
+        XCTAssertFalse(player.hasNext)
+        XCTAssertFalse(player.hasPrevious)
+
+        let a = makeTrack(id: "a", title: "A")
+        let b = makeTrack(id: "b", title: "B")
+        player.playSlice([a, b], startIndex: 0)   // queue=[b], no history
+        XCTAssertTrue(player.hasNext)
+        XCTAssertFalse(player.hasPrevious)
+
+        player.playNextInQueue()                  // queue=[], history=[a]
+        XCTAssertFalse(player.hasNext)
+        XCTAssertTrue(player.hasPrevious)
+    }
+
+    func test_hasNext_trueUnderRepeatAllEvenWhenQueueEmpty() {
+        player.repeatMode = .all
+        XCTAssertTrue(player.hasNext)
+    }
+
+    // MARK: - Sleep timer
+
+    func test_SleepTimer_pausesPlaybackWhenElapsed() async {
+        player.isPlaying = true
+        player.playbackState = .playing
+        player.scheduleSleepTimer(after: 0.05)
+        XCTAssertNotNil(player.sleepTimerEndDate)
+
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertFalse(player.isPlaying)
+        XCTAssertEqual(player.playbackState, .paused)
+        XCTAssertNil(player.sleepTimerEndDate, "the timer should clear itself after firing")
+    }
+
+    func test_SleepTimerOff_cancelsPendingTimer() {
+        player.scheduleSleepTimer(after: 100)
+        XCTAssertNotNil(player.sleepTimerEndDate)
+        player.startSleepTimer(.off)
+        XCTAssertNil(player.sleepTimerEndDate)
+    }
+
+    func test_SleepTimerDuration_mapsToInterval() {
+        XCTAssertNil(SleepTimerDuration.off.timeInterval)
+        XCTAssertEqual(SleepTimerDuration.min15.timeInterval, 15 * 60)
+        XCTAssertEqual(SleepTimerDuration.hour2.timeInterval, 2 * 60 * 60)
+    }
+
     // MARK: - Helpers
 
     private func makeTrack(id: String, title: String) -> Track {
