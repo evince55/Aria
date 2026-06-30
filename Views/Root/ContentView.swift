@@ -44,7 +44,7 @@ struct ContentView: View {
                         showFullPlayer = false
                     }
                 })
-                .transition(.move(edge: .bottom))
+                .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(100)
             }
         }
