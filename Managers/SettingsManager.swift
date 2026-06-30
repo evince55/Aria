@@ -67,8 +67,10 @@ final class SettingsManager: ObservableObject {
            let val = DefaultStartTab(rawValue: raw) { defaultStartTab = val }
         isDarkMode = defaults.object(forKey: "dark_mode") as? Bool ?? true
         selectedThemeID = defaults.string(forKey: "theme_id") ?? "blue"
-        if let raw = defaults.string(forKey: "sleep_timer"),
-           let val = SleepTimerDuration(rawValue: raw) { sleepTimer = val }
+        // The sleep timer is intentionally NOT restored. It's ephemeral —
+        // nothing re-arms it at launch, so restoring a stale "30 min"
+        // selection would show a duration with no running timer. It always
+        // starts at `.off` each launch.
         if let history = defaults.stringArray(forKey: "search_history") {
             searchHistory = history
         }
@@ -78,7 +80,7 @@ final class SettingsManager: ObservableObject {
         defaults.set(defaultStartTab.rawValue, forKey: "default_start_tab")
         defaults.set(isDarkMode, forKey: "dark_mode")
         defaults.set(selectedThemeID, forKey: "theme_id")
-        defaults.set(sleepTimer.rawValue, forKey: "sleep_timer")
+        // Sleep timer is ephemeral and deliberately not persisted (see load()).
         defaults.set(searchHistory, forKey: "search_history")
     }
 
