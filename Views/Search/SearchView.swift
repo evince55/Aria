@@ -242,7 +242,7 @@ struct SearchView: View {
                         selectedTab = .favorites
                     } label: {
                         HStack(spacing: DS.Spacing.sm) {
-                            TrackThumbnail(url: track.thumbnailURL, size: 52, cornerRadius: DS.Radius.sm)
+                            TrackThumbnail(url: track.thumbnailURL, size: 52, cornerRadius: DS.Radius.sm, tokens: tokens)
 
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(track.title)
@@ -345,7 +345,7 @@ struct SearchView: View {
             selectedTab = .favorites
         } label: {
             HStack(spacing: DS.Spacing.sm) {
-                TrackThumbnail(url: track.thumbnailURL, size: 56, cornerRadius: DS.Radius.sm)
+                TrackThumbnail(url: track.thumbnailURL, size: 56, cornerRadius: DS.Radius.sm, tokens: tokens)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
                         .font(DS.Typography.bodyEm)
@@ -377,7 +377,7 @@ struct SearchView: View {
             selectedTab = .favorites
         } label: {
             VStack(alignment: .leading, spacing: DS.Spacing.sm) {
-                TrackThumbnail(url: track.thumbnailURL, size: nil, cornerRadius: DS.Radius.md)
+                TrackThumbnail(url: track.thumbnailURL, size: nil, cornerRadius: DS.Radius.md, tokens: tokens)
                 Text(track.title)
                     .font(DS.Typography.captionStrong)
                     .foregroundColor(tokens.textPrimary)

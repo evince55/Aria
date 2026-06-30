@@ -120,16 +120,14 @@ struct FullScreenPlayerView: View {
         return Group {
             if let url = playerManager.currentArtworkURL {
                 AsyncCachedImage(url: url, targetSize: side) {
-                    Rectangle()
-                        .fill(themeManager.dividerColor)
+                    ArtworkPlaceholder(tokens: themeManager.tokens, cornerRadius: 12)
                 }
                 .aspectRatio(contentMode: .fit)
                 .frame(width: side, height: side)
                 .cornerRadius(12)
                 .shadow(color: .black.opacity(0.3), radius: 16, y: 4)
             } else {
-                Rectangle()
-                    .fill(themeManager.dividerColor)
+                ArtworkPlaceholder(tokens: themeManager.tokens, cornerRadius: 12)
                     .frame(width: side, height: side)
                     .cornerRadius(12)
             }

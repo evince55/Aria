@@ -103,7 +103,7 @@ struct QueueView: View {
                             .foregroundColor(tokens.textSecondary)
                             .frame(width: 24)
 
-                        TrackThumbnail(url: track.thumbnailURL, size: 44, cornerRadius: DS.Radius.sm)
+                        TrackThumbnail(url: track.thumbnailURL, size: 44, cornerRadius: DS.Radius.sm, tokens: tokens)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(track.title)

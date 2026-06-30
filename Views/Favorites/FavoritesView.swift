@@ -139,7 +139,7 @@ struct FavoritesView: View {
             recentlyPlayedManager.trackPlayed(track)
         } label: {
             HStack(spacing: DS.Spacing.sm) {
-                TrackThumbnail(url: track.thumbnailURL, size: 48, cornerRadius: DS.Radius.sm)
+                TrackThumbnail(url: track.thumbnailURL, size: 48, cornerRadius: DS.Radius.sm, tokens: tokens)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
                         .font(DS.Typography.bodyEm)

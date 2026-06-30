@@ -82,7 +82,7 @@ struct AsyncCachedImage<Placeholder: View>: View {
         url: URL?,
         cornerRadius: CGFloat = 0,
         targetSize: CGFloat = AsyncCachedImage.defaultTargetSize,
-        @ViewBuilder placeholder: @escaping () -> Placeholder = { ShimmerView() }
+        @ViewBuilder placeholder: @escaping () -> Placeholder = { ArtworkPlaceholder() }
     ) {
         self.url = url
         self.cornerRadius = cornerRadius
@@ -117,13 +117,12 @@ struct AsyncCachedImage<Placeholder: View>: View {
                         .resizable()
                         .scaledToFill()
                         .transition(.opacity.animation(.easeIn(duration: 0.18)))
-                } else if didFail {
-                    ZStack {
-                        Color.gray.opacity(0.15)
-                        Image(systemName: "photo")
-                            .foregroundColor(.gray.opacity(0.5))
-                    }
                 } else {
+                    // Same view shown for both "loading" and "failed"
+                    // (`didFail`) states — the caller-supplied placeholder,
+                    // or by default `ArtworkPlaceholder` — so a missing or
+                    // broken artwork URL still reads as "a track" rather
+                    // than reverting to a blank box once loading gives up.
                     placeholder()
                 }
             }

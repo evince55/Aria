@@ -147,7 +147,7 @@ struct PlaylistsView: View {
                 Group {
                     if let url = playlist.previewThumbnailURL {
                         AsyncCachedImage(url: url, cornerRadius: DS.Radius.md, targetSize: 130) {
-                            ShimmerView(cornerRadius: DS.Radius.md)
+                            ArtworkPlaceholder(tokens: tokens, cornerRadius: DS.Radius.md)
                         }
                     } else {
                         ZStack {
@@ -267,7 +267,7 @@ struct PlaylistsView: View {
             recentlyPlayedManager.trackPlayed(track)
         } label: {
             HStack(spacing: DS.Spacing.sm) {
-                TrackThumbnail(url: track.thumbnailURL, size: 44, cornerRadius: DS.Radius.sm)
+                TrackThumbnail(url: track.thumbnailURL, size: 44, cornerRadius: DS.Radius.sm, tokens: tokens)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
                         .font(DS.Typography.bodyEm)
@@ -360,7 +360,7 @@ struct PlaylistsView: View {
                 Group {
                     if let url = playlist.previewThumbnailURL {
                         AsyncCachedImage(url: url, cornerRadius: DS.Radius.sm, targetSize: 52) {
-                            ShimmerView(cornerRadius: DS.Radius.sm)
+                            ArtworkPlaceholder(tokens: tokens, cornerRadius: DS.Radius.sm)
                         }
                     } else {
                         RoundedRectangle(cornerRadius: DS.Radius.sm, style: .continuous)

@@ -76,13 +76,7 @@ struct LibraryTrackRow: View {
     }
 
     private var placeholderArtwork: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(tokens.dividerColor)
-            Image(systemName: "music.note")
-                .font(.title3)
-                .foregroundColor(tokens.textSecondary)
-        }
+        ArtworkPlaceholder(tokens: tokens, cornerRadius: 6)
     }
 
     private func formatBytes(_ bytes: Int64) -> String {

@@ -3,7 +3,10 @@ import SwiftUI
 struct MiniPlayerView: View {
     @EnvironmentObject private var playerManager: PlayerManager
     @EnvironmentObject private var clock: PlaybackClock
+    @EnvironmentObject private var themeManager: ThemeManager
     var onTap: () -> Void
+
+    private var tokens: DesignTokens { themeManager.tokens }
 
     var body: some View {
         Button(action: onTap) {
@@ -71,10 +74,10 @@ struct MiniPlayerView: View {
     private var artworkThumbnail: some View {
         if let url = playerManager.currentArtworkURL {
             AsyncCachedImage(url: url, targetSize: 36) {
-                Rectangle().fill(.gray.opacity(0.3))
+                ArtworkPlaceholder(tokens: tokens, cornerRadius: 4)
             }
         } else {
-            Rectangle().fill(.gray.opacity(0.3))
+            ArtworkPlaceholder(tokens: tokens, cornerRadius: 4)
         }
     }
 

@@ -84,7 +84,7 @@ struct PlaylistDetailView: View {
             Group {
                 if let url = currentPlaylist.previewThumbnailURL {
                     AsyncCachedImage(url: url, cornerRadius: DS.Radius.lg, targetSize: 180) {
-                        ShimmerView(cornerRadius: DS.Radius.lg)
+                        ArtworkPlaceholder(tokens: tokens, cornerRadius: DS.Radius.lg)
                     }
                 } else {
                     ZStack {
@@ -208,7 +208,7 @@ struct PlaylistDetailView: View {
                 } label: {
                     HStack(spacing: DS.Spacing.sm) {
                         NowPlayingLeadingBar(isCurrent: playerManager.currentTrack?.id == track.id, accent: tokens.accent)
-                        TrackThumbnail(url: track.thumbnailURL, size: 48, cornerRadius: DS.Radius.sm)
+                        TrackThumbnail(url: track.thumbnailURL, size: 48, cornerRadius: DS.Radius.sm, tokens: tokens)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(track.title)
                                 .font(DS.Typography.bodyEm)

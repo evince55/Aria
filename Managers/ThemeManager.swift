@@ -32,6 +32,14 @@ import Combine
         DesignTokens(isDark: isDarkMode, accent: theme.accentColor)
     }
 
+    /// Reasonable default tokens for views that need a `DesignTokens`
+    /// value without access to a live `ThemeManager` instance (e.g. a
+    /// shared view's default parameter value). Matches `AppTheme.default`
+    /// in dark mode, which is the app's default appearance.
+    static var fallbackTokens: DesignTokens {
+        DesignTokens(isDark: true, accent: AppTheme.default.accentColor)
+    }
+
     // MARK: - Legacy convenience (kept for existing call-sites)
 
     var background: Color { tokens.background }
