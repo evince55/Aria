@@ -41,7 +41,7 @@ final class LibraryViewModelTests: XCTestCase {
             id: id,
             title: title,
             artist: artist,
-            artworkURL: nil,
+            artworkFileName: nil,
             fileName: "\(id.uuidString).mp3",
             importedAt: importedAt,
             fileSizeBytes: fileSizeBytes,

@@ -50,7 +50,7 @@ final class LocalLibraryManagerTests: XCTestCase {
             id: UUID(),
             title: "Pre-existing",
             artist: "Test",
-            artworkURL: nil,
+            artworkFileName: nil,
             fileName: "abc.mp3",
             importedAt: Date(),
             fileSizeBytes: 1234,
@@ -167,12 +167,14 @@ final class LocalLibraryManagerTests: XCTestCase {
         try Data(jpegBytes).write(to: artworkURL)
         XCTAssertTrue(FileManager.default.fileExists(atPath: artworkURL.path))
 
-        // Mutate the track in-memory to attach the artwork URL, then remove.
+        // Mutate the track in-memory to attach the artwork file name, then
+        // remove. The manager resolves the absolute path via
+        // `artworkURL(for:)` against its injected library directory.
         track = LocalTrack(
             id: track.id,
             title: track.title,
             artist: track.artist,
-            artworkURL: artworkURL,
+            artworkFileName: artworkURL.lastPathComponent,
             fileName: track.fileName,
             importedAt: track.importedAt,
             fileSizeBytes: track.fileSizeBytes,
@@ -239,7 +241,7 @@ final class LocalLibraryManagerTests: XCTestCase {
             id: UUID(),
             title: "T",
             artist: "A",
-            artworkURL: nil,
+            artworkFileName: nil,
             fileName: "f.mp3",
             importedAt: Date(),
             fileSizeBytes: 100,
@@ -254,7 +256,7 @@ final class LocalLibraryManagerTests: XCTestCase {
             id: UUID(),
             title: "T",
             artist: "A",
-            artworkURL: nil,
+            artworkFileName: nil,
             fileName: "f.mp3",
             importedAt: Date(),
             fileSizeBytes: 100,
@@ -638,6 +640,272 @@ final class LocalLibraryManagerTests: XCTestCase {
         let asset = StaticMetadataAsset(allMetadata: [item])
         let data = await LocalLibraryManager.loadArtworkData(from: asset)
         XCTAssertNil(data, "an artwork item with empty data should not be treated as present")
+    }
+
+    // MARK: - Artwork relative-path storage + migration (container-UUID fix)
+
+    func test_localTrack_migratesLegacyAbsoluteArtworkURL_toFileName() throws {
+        // Simulate an OLD persisted entry that stored an absolute artwork
+        // URL baked against a now-dead container UUID.
+        let legacyJSON = """
+        {
+          "id": "\(UUID().uuidString)",
+          "title": "Legacy",
+          "artist": "A",
+          "artworkURL": "file:///var/mobile/Containers/Data/Application/DEAD-UUID/Documents/AriaLibrary/artwork/cover-123.jpg",
+          "fileName": "song.mp3",
+          "importedAt": 0,
+          "fileSizeBytes": 100,
+          "durationSeconds": 60,
+          "isMissing": false
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(LocalTrack.self, from: legacyJSON)
+        XCTAssertEqual(decoded.artworkFileName, "cover-123.jpg",
+                       "legacy absolute artworkURL should migrate to its last path component")
+    }
+
+    func test_localTrack_migratesLegacyArtworkURL_encodedAsRawString() throws {
+        // Some encoders wrote the URL as a plain string rather than a URL.
+        let legacyJSON = """
+        {
+          "id": "\(UUID().uuidString)",
+          "title": "Legacy",
+          "artist": "A",
+          "artworkURL": "/var/mobile/.../artwork/raw-string-cover.png",
+          "fileName": "song.mp3",
+          "importedAt": 0,
+          "fileSizeBytes": 100,
+          "durationSeconds": 60
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(LocalTrack.self, from: legacyJSON)
+        XCTAssertEqual(decoded.artworkFileName, "raw-string-cover.png")
+    }
+
+    func test_localTrack_encodesRelativeFileName_notAbsolutePath() throws {
+        let track = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: "A",
+            artworkFileName: "cover.jpg",
+            fileName: "song.mp3",
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+        let data = try JSONEncoder().encode(track)
+        let json = String(data: data, encoding: .utf8)!
+
+        XCTAssertTrue(json.contains("\"artworkFileName\":\"cover.jpg\""),
+                      "should persist the relative file name")
+        XCTAssertFalse(json.contains("artworkURL"),
+                       "should NOT persist any absolute artworkURL key")
+        XCTAssertFalse(json.contains("file://") || json.contains("/Containers/"),
+                       "should NOT persist any absolute path")
+
+        let decoded = try JSONDecoder().decode(LocalTrack.self, from: data)
+        XCTAssertEqual(decoded.artworkFileName, "cover.jpg", "round-trips")
+    }
+
+    func test_artworkURLFor_resolvesAgainstCurrentLibraryDirectory() {
+        let track = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: "A",
+            artworkFileName: "cover-xyz.jpg",
+            fileName: "song.mp3",
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+        let resolved = manager.artworkURL(for: track)
+        XCTAssertNotNil(resolved)
+        // Resolved under the injected (temp) library dir, not any baked-in path.
+        XCTAssertEqual(resolved?.deletingLastPathComponent().path,
+                       libraryDir.appendingPathComponent("artwork").path)
+        XCTAssertEqual(resolved?.lastPathComponent, "cover-xyz.jpg")
+    }
+
+    func test_artworkURLFor_nilWhenNoArtworkFileName() {
+        let track = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: "A",
+            artworkFileName: nil,
+            fileName: "song.mp3",
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+        XCTAssertNil(manager.artworkURL(for: track))
+    }
+
+    func test_artworkURLFor_resolvedPathChangesWithLibraryDirectory() async throws {
+        // The same persisted track resolves to DIFFERENT absolute paths
+        // under two different library directories — proving the path is
+        // re-derived at access time (the container-UUID-change fix) rather
+        // than baked into the model.
+        let track = LocalTrack(
+            id: UUID(),
+            title: "T",
+            artist: "A",
+            artworkFileName: "art.jpg",
+            fileName: "song.mp3",
+            importedAt: Date(),
+            fileSizeBytes: 100,
+            durationSeconds: 30
+        )
+        let otherDir = tmpDir.appendingPathComponent("OtherContainer/AriaLibrary")
+        let otherManager = LocalLibraryManager(store: InMemoryKeyValueStore(), libraryDirectory: otherDir)
+
+        let a = manager.artworkURL(for: track)
+        let b = otherManager.artworkURL(for: track)
+        XCTAssertNotEqual(a?.path, b?.path, "resolved path must follow the manager's library directory")
+        XCTAssertTrue(a!.path.hasPrefix(libraryDir.path))
+        XCTAssertTrue(b!.path.hasPrefix(otherDir.path))
+    }
+
+    // MARK: - Self-heal missing artwork (recovers tracks across rebuilds)
+
+    /// Seeds a store with one track (already claiming `artworkFileName`)
+    /// plus a present audio file under `dir`, then returns a manager built
+    /// on `dir` with the given injected artwork loader. The artwork file
+    /// itself is intentionally NOT written, simulating the dead-container
+    /// state (audio survived, artwork gone).
+    private func makeHealableManager(
+        artworkFileNameClaim: String,
+        loader: @escaping (URL) async -> Data?
+    ) throws -> (LocalLibraryManager, LocalTrack) {
+        let id = UUID()
+        let fileName = "\(id.uuidString).mp3"
+        // Audio file present under the live library dir.
+        try FileManager.default.createDirectory(at: libraryDir, withIntermediateDirectories: true)
+        try Data(repeating: 0x42, count: 1024).write(to: libraryDir.appendingPathComponent(fileName))
+
+        let seeded = LocalTrack(
+            id: id, title: "Seeded", artist: "A",
+            artworkFileName: artworkFileNameClaim,
+            fileName: fileName, importedAt: Date(),
+            fileSizeBytes: 1024, durationSeconds: 60
+        )
+        let seed = try JSONEncoder().encode(
+            VersionedEnvelope(schemaVersion: LocalLibraryManager.schemaVersion, items: [seeded])
+        )
+        let m = LocalLibraryManager(
+            store: InMemoryKeyValueStore(seed: seed),
+            libraryDirectory: libraryDir,
+            loadArtworkData: loader
+        )
+        return (m, seeded)
+    }
+
+    func test_healMissingArtwork_reextractsArtworkWhenFileGoneButAudioPresent() async throws {
+        // Loader returns valid JPEG bytes (simulating embedded artwork in
+        // the surviving audio file). Self-heal must re-extract + write it.
+        let jpeg = jpegBytes
+        let (healed, seeded) = try makeHealableManager(
+            artworkFileNameClaim: "\(UUID().uuidString).jpg",
+            loader: { _ in jpeg }
+        )
+        XCTAssertEqual(healed.tracks.count, 1)
+        // Precondition: claimed artwork file is absent on disk.
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: healed.artworkURL(for: seeded)!.path)
+        )
+
+        // Wait for the fire-and-forget heal Task.
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let healedTrack = healed.tracks[0]
+        XCTAssertNotNil(healedTrack.artworkFileName)
+        let resolved = healed.artworkURL(for: healedTrack)
+        XCTAssertNotNil(resolved)
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: resolved!.path),
+            "self-heal should have re-extracted and written artwork to the live container"
+        )
+        XCTAssertEqual(resolved!.deletingLastPathComponent().path,
+                       libraryDir.appendingPathComponent("artwork").path)
+        XCTAssertTrue(resolved!.lastPathComponent.hasSuffix(".jpg"))
+    }
+
+    func test_healMissingArtwork_noArtworkExtractable_leavesFileAbsentNoCrash() async throws {
+        // Loader returns nil (no embedded artwork). Self-heal is a no-op:
+        // best-effort, never throws, artwork stays absent.
+        let (healed, _) = try makeHealableManager(
+            artworkFileNameClaim: "\(UUID().uuidString).jpg",
+            loader: { _ in nil }
+        )
+        try await Task.sleep(nanoseconds: 200_000_000)
+        let track = healed.tracks[0]
+        if let art = healed.artworkURL(for: track) {
+            XCTAssertFalse(FileManager.default.fileExists(atPath: art.path))
+        }
+    }
+
+    func test_healMissingArtwork_skipsWhenArtworkAlreadyOnDisk() async throws {
+        // If the artwork file already exists, the loader must NOT be called.
+        let artName = "\(UUID().uuidString).jpg"
+        let artworkDir = libraryDir.appendingPathComponent("artwork", isDirectory: true)
+        try FileManager.default.createDirectory(at: artworkDir, withIntermediateDirectories: true)
+
+        var loaderCalled = false
+        // Pre-write the artwork file so heal should skip it. We can't know
+        // the file name before seeding, so write it after constructing the
+        // claim and before the manager's heal Task runs is racy; instead,
+        // assert via loaderCalled staying false when the file is present.
+        try Data(jpegBytes).write(to: artworkDir.appendingPathComponent(artName))
+
+        let id = UUID()
+        let fileName = "\(id.uuidString).mp3"
+        try Data(repeating: 0x42, count: 1024).write(to: libraryDir.appendingPathComponent(fileName))
+        let seeded = LocalTrack(
+            id: id, title: "Seeded", artist: "A",
+            artworkFileName: artName,
+            fileName: fileName, importedAt: Date(),
+            fileSizeBytes: 1024, durationSeconds: 60
+        )
+        let seed = try JSONEncoder().encode(
+            VersionedEnvelope(schemaVersion: LocalLibraryManager.schemaVersion, items: [seeded])
+        )
+        let m = LocalLibraryManager(
+            store: InMemoryKeyValueStore(seed: seed),
+            libraryDirectory: libraryDir,
+            loadArtworkData: { _ in loaderCalled = true; return nil }
+        )
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertFalse(loaderCalled, "heal must skip tracks whose artwork is already on disk")
+        XCTAssertEqual(m.tracks[0].artworkFileName, artName)
+    }
+
+    func test_import_endToEnd_syntheticFileHasNoArtwork() async throws {
+        // A freshly imported synthetic file has no embedded artwork (default
+        // loader path), so artworkFileName stays nil.
+        let source = try makeSourceFile()
+        let track = try await manager.importFile(at: source)
+        XCTAssertNil(track.artworkFileName)
+    }
+
+    func test_import_extractsArtwork_viaInjectedLoader() async throws {
+        // With an injected loader that yields PNG bytes, import writes the
+        // artwork and records a relative .png file name resolvable against
+        // the library dir.
+        let png = pngBytes
+        let m = LocalLibraryManager(
+            store: InMemoryKeyValueStore(),
+            libraryDirectory: libraryDir,
+            loadArtworkData: { _ in png }
+        )
+        let source = try makeSourceFile()
+        let track = try await m.importFile(at: source)
+        XCTAssertNotNil(track.artworkFileName)
+        XCTAssertTrue(track.artworkFileName!.hasSuffix(".png"))
+        let resolved = m.artworkURL(for: track)
+        XCTAssertNotNil(resolved)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: resolved!.path))
     }
 
     // MARK: - Metadata fallbacks (B4)

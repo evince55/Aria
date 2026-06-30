@@ -23,12 +23,12 @@ final class PlayerManagerMissingTrackTests: XCTestCase {
         try Data(repeating: 0, count: 100).write(to: presentURL)
         defer { try? FileManager.default.removeItem(at: presentURL) }
         let presentLocal = LocalTrack(
-            id: UUID(), title: "Present", artist: "A", artworkURL: nil,
+            id: UUID(), title: "Present", artist: "A", artworkFileName: nil,
             fileName: presentURL.lastPathComponent, importedAt: Date(),
             fileSizeBytes: 100, durationSeconds: 30
         )
         let missingLocal = LocalTrack(
-            id: UUID(), title: "Missing", artist: "A", artworkURL: nil,
+            id: UUID(), title: "Missing", artist: "A", artworkFileName: nil,
             fileName: "nope.mp3", importedAt: Date(),
             fileSizeBytes: 100, durationSeconds: 30,
             isMissing: true
@@ -88,28 +88,28 @@ final class PlayerManagerMissingTrackTests: XCTestCase {
             try? FileManager.default.removeItem(at: presentURL3)
         }
         let m1 = LocalTrack(
-            id: UUID(), title: "M1", artist: "A", artworkURL: nil,
+            id: UUID(), title: "M1", artist: "A", artworkFileName: nil,
             fileName: "m1.mp3", importedAt: Date(),
             fileSizeBytes: 100, durationSeconds: 30,
             isMissing: true
         )
         let p1 = LocalTrack(
-            id: UUID(), title: "P1", artist: "A", artworkURL: nil,
+            id: UUID(), title: "P1", artist: "A", artworkFileName: nil,
             fileName: presentURL1.lastPathComponent, importedAt: Date(),
             fileSizeBytes: 100, durationSeconds: 30
         )
         let p2 = LocalTrack(
-            id: UUID(), title: "P2", artist: "A", artworkURL: nil,
+            id: UUID(), title: "P2", artist: "A", artworkFileName: nil,
             fileName: presentURL2.lastPathComponent, importedAt: Date(),
             fileSizeBytes: 100, durationSeconds: 30
         )
         let p3 = LocalTrack(
-            id: UUID(), title: "P3", artist: "A", artworkURL: nil,
+            id: UUID(), title: "P3", artist: "A", artworkFileName: nil,
             fileName: presentURL3.lastPathComponent, importedAt: Date(),
             fileSizeBytes: 100, durationSeconds: 30
         )
         let m2 = LocalTrack(
-            id: UUID(), title: "M2", artist: "A", artworkURL: nil,
+            id: UUID(), title: "M2", artist: "A", artworkFileName: nil,
             fileName: "m2.mp3", importedAt: Date(),
             fileSizeBytes: 100, durationSeconds: 30,
             isMissing: true
@@ -210,7 +210,7 @@ final class PlayerManagerMissingTrackTests: XCTestCase {
             id: UUID(),
             title: "Ghost",
             artist: "A",
-            artworkURL: nil,
+            artworkFileName: nil,
             fileName: url.lastPathComponent,
             importedAt: Date(),
             fileSizeBytes: 100,
