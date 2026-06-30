@@ -51,3 +51,22 @@ Status flows: `open → claimed → in-PR → done` (or back to `open` on denial
 - **Self-improvement** → every denied or reworked PR adds a line to `lane-lessons.md`; the lane
   kickoff prompts in [`lane-kickoff-prompts.md`](lane-kickoff-prompts.md) are refined from those
   lessons over time.
+
+## Automated dispatch (you-driven mode)
+
+The cycle is automated up to the PR; the merge is always yours. Driven by the `/dispatch`
+slash command (`~/.claude/commands/dispatch.md`), single-pass, one worker per invocation.
+
+- **`/dispatch <lane>`** — picks the next `open` finding in that lane, spins up a worktree,
+  runs one single-pass worker (no reviewer agent), opens a **draft PR**, sets the lane `in-PR`,
+  and stops. You review and merge (or close).
+- **After your verdict**, tell the dispatcher: *merged* → finding `✅ done`, lane `idle`,
+  worktree removed; *denied* → finding `open`, lane `idle`, and a line appended to
+  `lane-lessons.md`. Recurring lessons get folded into that lane's kickoff prompt
+  (**self-improvement** — those prompt edits are themselves PR'd, so the loop never silently
+  rewrites its own instructions).
+- **Guarantees:** never auto-merges; one worker per lane; worker confined to the lane's
+  write-set; one finding per PR; single-pass (no reviewer/meta agents) unless you opt in.
+
+Run lanes with disjoint write-sets in parallel (`/dispatch backend` and `/dispatch ui` at once
+is safe); never two that share a hotspot.
