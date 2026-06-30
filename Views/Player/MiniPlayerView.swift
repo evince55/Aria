@@ -70,7 +70,7 @@ struct MiniPlayerView: View {
     @ViewBuilder
     private var artworkThumbnail: some View {
         if let url = playerManager.currentArtworkURL {
-            AsyncCachedImage(url: url) {
+            AsyncCachedImage(url: url, targetSize: 36) {
                 Rectangle().fill(.gray.opacity(0.3))
             }
         } else {

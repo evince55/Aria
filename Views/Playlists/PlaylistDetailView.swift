@@ -83,7 +83,7 @@ struct PlaylistDetailView: View {
         VStack(spacing: DS.Spacing.md) {
             Group {
                 if let url = currentPlaylist.previewThumbnailURL {
-                    AsyncCachedImage(url: url, cornerRadius: DS.Radius.lg) {
+                    AsyncCachedImage(url: url, cornerRadius: DS.Radius.lg, targetSize: 180) {
                         ShimmerView(cornerRadius: DS.Radius.lg)
                     }
                 } else {

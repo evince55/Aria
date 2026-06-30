@@ -12,7 +12,14 @@ struct TrackThumbnail: View {
     var cornerRadius: CGFloat = 6
 
     var body: some View {
-        AsyncCachedImage(url: url, cornerRadius: cornerRadius) {
+        // `size` is nil for grid cells that fill available width with a
+        // 1:1 aspect ratio; fall back to the shared default target so
+        // those still downsample rather than decoding full resolution.
+        AsyncCachedImage(
+            url: url,
+            cornerRadius: cornerRadius,
+            targetSize: size ?? AsyncCachedImage<ShimmerView>.defaultTargetSize
+        ) {
             ShimmerView(cornerRadius: cornerRadius)
         }
         .modifier(ThumbnailSizing(size: size))

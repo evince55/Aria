@@ -62,7 +62,7 @@ struct LibraryTrackRow: View {
     @ViewBuilder
     private var artworkView: some View {
         if let url = track.artworkURL {
-            AsyncCachedImage(url: url) {
+            AsyncCachedImage(url: url, targetSize: 48) {
                 placeholderArtwork
             }
         } else {

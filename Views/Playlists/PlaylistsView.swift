@@ -146,7 +146,7 @@ struct PlaylistsView: View {
             VStack(alignment: .leading, spacing: DS.Spacing.sm) {
                 Group {
                     if let url = playlist.previewThumbnailURL {
-                        AsyncCachedImage(url: url, cornerRadius: DS.Radius.md) {
+                        AsyncCachedImage(url: url, cornerRadius: DS.Radius.md, targetSize: 130) {
                             ShimmerView(cornerRadius: DS.Radius.md)
                         }
                     } else {
@@ -354,7 +354,7 @@ struct PlaylistsView: View {
             HStack(spacing: DS.Spacing.md) {
                 Group {
                     if let url = playlist.previewThumbnailURL {
-                        AsyncCachedImage(url: url, cornerRadius: DS.Radius.sm) {
+                        AsyncCachedImage(url: url, cornerRadius: DS.Radius.sm, targetSize: 52) {
                             ShimmerView(cornerRadius: DS.Radius.sm)
                         }
                     } else {

@@ -119,7 +119,7 @@ struct FullScreenPlayerView: View {
 
         return Group {
             if let url = playerManager.currentArtworkURL {
-                AsyncCachedImage(url: url) {
+                AsyncCachedImage(url: url, targetSize: side) {
                     Rectangle()
                         .fill(themeManager.dividerColor)
                 }
