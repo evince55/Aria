@@ -49,35 +49,42 @@ final class YouTubeSearchService {
             throw URLError(.badURL)
         }
 
-        let (data, response) = try await urlSession.data(from: url)
+        // Retry transient failures (timeouts / 502 / 503) so a Render free-tier
+        // cold start doesn't fail the user's first search.
+        return try await withRetry {
+            let (data, response) = try await urlSession.data(from: url)
 
-        if let httpResponse = response as? HTTPURLResponse,
-           httpResponse.statusCode >= 400 {
-            let message = String(data: data, encoding: .utf8) ?? "Server error"
-            throw ServiceError.serverError(message)
-        }
+            if let httpResponse = response as? HTTPURLResponse,
+               httpResponse.statusCode >= 400 {
+                if httpResponse.statusCode == 502 || httpResponse.statusCode == 503 {
+                    throw RetryPolicy.RetryableHTTPStatus(statusCode: httpResponse.statusCode)
+                }
+                let message = String(data: data, encoding: .utf8) ?? "Server error"
+                throw ServiceError.serverError(message)
+            }
 
-        struct SearchResult: Decodable {
-            let id: String
-            let title: String
-            let artist: String
-            let thumbnail: URL?
-        }
+            struct SearchResult: Decodable {
+                let id: String
+                let title: String
+                let artist: String
+                let thumbnail: URL?
+            }
 
-        let results: [SearchResult]
-        do {
-            results = try JSONDecoder().decode([SearchResult].self, from: data)
-        } catch {
-            throw ServiceError.decodingFailed
-        }
+            let results: [SearchResult]
+            do {
+                results = try JSONDecoder().decode([SearchResult].self, from: data)
+            } catch {
+                throw ServiceError.decodingFailed
+            }
 
-        return results.map { item in
-            Track(
-                id: item.id,
-                title: item.title,
-                artist: item.artist,
-                thumbnailURL: item.thumbnail
-            )
+            return results.map { item in
+                Track(
+                    id: item.id,
+                    title: item.title,
+                    artist: item.artist,
+                    thumbnailURL: item.thumbnail
+                )
+            }
         }
     }
 }

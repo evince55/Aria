@@ -15,6 +15,16 @@ final class AVPlayerPath {
     private var timeObserver: Any?
     private var statusObserver: NSKeyValueObservation?
     private var rateObserver: NSKeyValueObservation?
+    private var bufferEmptyObserver: NSKeyValueObservation?
+    private var likelyToKeepUpObserver: NSKeyValueObservation?
+    /// Fires if the buffer stays empty past the grace period, asking
+    /// `PlayerManager` to re-resolve + resume. Re-armed each time the buffer
+    /// empties, cancelled when playback recovers or the item is torn down.
+    private var stallWatchdog: Task<Void, Never>?
+    private let stallGrace: TimeInterval = 8
+    /// Last whole-second pushed to Now Playing, so the 4 Hz time observer only
+    /// updates the lock screen ~1×/sec instead of every tick.
+    private var lastNowPlayingSecond = -1
     private weak var endObserverItem: AVPlayerItem?
 
     /// Stored seek target consumed on next `play`. PlayerManager writes to
@@ -38,6 +48,9 @@ final class AVPlayerPath {
     deinit {
         statusObserver?.invalidate()
         rateObserver?.invalidate()
+        bufferEmptyObserver?.invalidate()
+        likelyToKeepUpObserver?.invalidate()
+        stallWatchdog?.cancel()
     }
 
     // MARK: - Playback
@@ -59,6 +72,10 @@ final class AVPlayerPath {
         if let obs = timeObserver { avPlayer?.removeTimeObserver(obs) }
         statusObserver?.invalidate()
         rateObserver?.invalidate()
+        bufferEmptyObserver?.invalidate()
+        likelyToKeepUpObserver?.invalidate()
+        cancelStallWatchdog()
+        lastNowPlayingSecond = -1
         avPlayer?.pause()
         removeEndObserver()
 
@@ -66,6 +83,9 @@ final class AVPlayerPath {
         playerItem = AVPlayerItem(asset: asset)
         playerItem?.preferredForwardBufferDuration = 10
         avPlayer = AVPlayer(playerItem: playerItem)
+        // Let AVPlayer hold playback until it has enough buffer to avoid
+        // immediate stalls on a slow start, rather than starting and dying.
+        avPlayer?.automaticallyWaitsToMinimizeStalling = true
 
         rateObserver = avPlayer?.observe(\.rate, options: [.new]) { [weak self] avPlayer, _ in
             log.notice("rate changed -> \(avPlayer.rate, privacy: .public)")
@@ -109,11 +129,40 @@ final class AVPlayerPath {
             }
         }
 
-        let interval = CMTime(seconds: 1.0, preferredTimescale: 600)
+        // Rebuffer detection: buffer empties mid-playback → show "Buffering…"
+        // and arm the stall watchdog; able-to-keep-up → clear it and let
+        // PlayerManager re-arm retries.
+        bufferEmptyObserver = playerItem?.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] item, _ in
+            DispatchQueue.main.async {
+                guard let self, let player = self.player else { return }
+                guard item.isPlaybackBufferEmpty, player.playbackState == .playing else { return }
+                player.isRebuffering = true
+                self.armStallWatchdog()
+            }
+        }
+
+        likelyToKeepUpObserver = playerItem?.observe(\.isPlaybackLikelyToKeepUp, options: [.new]) { [weak self] item, _ in
+            DispatchQueue.main.async {
+                guard let self, let player = self.player else { return }
+                if item.isPlaybackLikelyToKeepUp {
+                    self.cancelStallWatchdog()
+                    player.notePlaybackRecovered()
+                }
+            }
+        }
+
+        // 4 Hz position updates → smooth scrubber, but only the clock's
+        // observers (the player view) re-render. Now Playing is throttled to
+        // ~1 Hz so the lock screen isn't spammed.
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
         timeObserver = avPlayer?.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-            log.debug("time=\(time.seconds, privacy: .public) duration=\(self?.player?.duration ?? 0, privacy: .public) rate=\(self?.avPlayer?.rate ?? -1, privacy: .public)")
-            self?.player?.currentTime = time.seconds
-            self?.player?.nowPlaying.updateNowPlaying()
+            guard let self, let player = self.player else { return }
+            player.clock.currentTime = time.seconds
+            let sec = Int(time.seconds)
+            if sec != self.lastNowPlayingSecond {
+                self.lastNowPlayingSecond = sec
+                player.nowPlaying.updateNowPlaying()
+            }
         }
 
         addEndObserver(for: playerItem)
@@ -216,10 +265,38 @@ final class AVPlayerPath {
         if let obs = timeObserver { avPlayer?.removeTimeObserver(obs) }
         statusObserver?.invalidate()
         rateObserver?.invalidate()
+        bufferEmptyObserver?.invalidate()
+        likelyToKeepUpObserver?.invalidate()
+        cancelStallWatchdog()
         avPlayer = nil
         playerItem = nil
         timeObserver = nil
+        bufferEmptyObserver = nil
+        likelyToKeepUpObserver = nil
+        lastNowPlayingSecond = -1
         eqTap = nil
+        player?.isRebuffering = false
+    }
+
+    // MARK: - Stall watchdog
+
+    /// Arms (or re-arms) the grace timer. If the item is still starved when it
+    /// fires, ask `PlayerManager` to re-resolve and resume.
+    private func armStallWatchdog() {
+        stallWatchdog?.cancel()
+        stallWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64((self?.stallGrace ?? 8) * 1_000_000_000))
+            guard let self, !Task.isCancelled,
+                  let player = self.player, let item = self.playerItem else { return }
+            if item.isPlaybackBufferEmpty && !item.isPlaybackLikelyToKeepUp {
+                player.handleStall()
+            }
+        }
+    }
+
+    private func cancelStallWatchdog() {
+        stallWatchdog?.cancel()
+        stallWatchdog = nil
     }
 
     // MARK: - Duration fix-up

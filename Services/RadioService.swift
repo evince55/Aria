@@ -29,24 +29,26 @@ actor RadioService: RadioServing {
             throw StreamResolverError.invalidEndpoint
         }
 
-        let (data, response) = try await session.data(from: endpoint)
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            throw StreamResolverError.serverError(
-                status: http.statusCode,
-                body: String(data: data, encoding: .utf8) ?? "<binary>"
-            )
-        }
+        return try await withRetry(isRetryable: StreamResolver.isRetryable) {
+            let (data, response) = try await session.data(from: endpoint)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw StreamResolverError.serverError(
+                    status: http.statusCode,
+                    body: String(data: data, encoding: .utf8) ?? "<binary>"
+                )
+            }
 
-        struct RadioResult: Decodable {
-            let id: String
-            let title: String
-            let artist: String
-            let thumbnail: URL?
-        }
+            struct RadioResult: Decodable {
+                let id: String
+                let title: String
+                let artist: String
+                let thumbnail: URL?
+            }
 
-        let results = try JSONDecoder().decode([RadioResult].self, from: data)
-        return results.map {
-            Track(id: $0.id, title: $0.title, artist: $0.artist, thumbnailURL: $0.thumbnail)
+            let results = try JSONDecoder().decode([RadioResult].self, from: data)
+            return results.map {
+                Track(id: $0.id, title: $0.title, artist: $0.artist, thumbnailURL: $0.thumbnail)
+            }
         }
     }
 }

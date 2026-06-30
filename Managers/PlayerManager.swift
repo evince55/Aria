@@ -19,8 +19,6 @@ final class PlayerManager: NSObject, ObservableObject {
     @Published private(set) var currentArtworkURL: URL?
     @Published var isPlaying = false
     @Published var playbackState: PlaybackState = .idle
-    @Published var currentTime: TimeInterval = 0
-    @Published var duration: TimeInterval = 0
     @Published var isShuffled = false
     @Published var repeatMode: RepeatMode = .off
     @Published var queue: [Track] = []
@@ -29,6 +27,30 @@ final class PlayerManager: NSObject, ObservableObject {
     /// `nil` when no timer is active. The view layer observes this to show a
     /// live countdown.
     @Published private(set) var sleepTimerEndDate: Date?
+
+    /// True while the current item has drained its buffer mid-playback and is
+    /// re-buffering. Drives the player's "Buffering…" affordance. Lives on
+    /// `PlayerManager` (not the clock) because it's a coarse, low-frequency
+    /// state, unlike the per-tick position.
+    @Published var isRebuffering = false
+
+    /// High-frequency playback position + track length, split into its own
+    /// observable so the 4 Hz time observer re-renders only the scrubber, not
+    /// every view that observes `PlayerManager`. `currentTime` / `duration`
+    /// below forward to it so existing call sites are unchanged.
+    let clock = PlaybackClock()
+
+    /// Forwarders to `clock`. Plain computed properties (NOT `@Published`), so
+    /// writing the position every tick does not fire `PlayerManager`'s
+    /// `objectWillChange` — only `clock`'s observers update.
+    var currentTime: TimeInterval {
+        get { clock.currentTime }
+        set { clock.currentTime = newValue }
+    }
+    var duration: TimeInterval {
+        get { clock.duration }
+        set { clock.duration = newValue }
+    }
 
     let eq: EQController
 
@@ -75,7 +97,10 @@ final class PlayerManager: NSObject, ObservableObject {
     // MARK: - Subsystems
 
     private var urlSession: URLSessionProtocol!
-    private var streamResolver: StreamResolving!
+    /// Wraps the `StreamResolver` with a one-deep look-ahead cache. Normal
+    /// playback resolves through this so a prefetched next track starts with no
+    /// network round-trip.
+    private var prefetcher: StreamPrefetcher!
     private var radioService: RadioServing!
 
     var nowPlaying: NowPlayingService!
@@ -120,7 +145,7 @@ final class PlayerManager: NSObject, ObservableObject {
     override init() {
         let session = Self.defaultURLSession()
         self.urlSession = session
-        self.streamResolver = StreamResolver(session: session)
+        self.prefetcher = StreamPrefetcher(resolver: StreamResolver(session: session))
         self.radioService = RadioService(session: session)
         self.eq = EQController()
         super.init()
@@ -140,7 +165,7 @@ final class PlayerManager: NSObject, ObservableObject {
     /// Designated initialiser for tests and alternative configurations.
     init(urlSession: URLSessionProtocol, eq: EQController = EQController()) {
         self.urlSession = urlSession
-        self.streamResolver = StreamResolver(session: urlSession)
+        self.prefetcher = StreamPrefetcher(resolver: StreamResolver(session: urlSession))
         self.radioService = RadioService(session: urlSession)
         self.eq = eq
         super.init()
@@ -280,6 +305,8 @@ final class PlayerManager: NSObject, ObservableObject {
         currentArtworkURL = track.thumbnailURL
         currentVideoID = track.id
         didRetryResolve = false
+        stallRetryCount = 0
+        isRebuffering = false
         isPlaying = true
         playbackState = .loading
         currentTime = 0
@@ -650,6 +677,11 @@ final class PlayerManager: NSObject, ObservableObject {
     /// per play so a genuinely dead track surfaces an error instead of looping.
     private var currentVideoID: String?
     private var didRetryResolve = false
+    /// Counts mid-playback stall recoveries for the current track so a
+    /// persistently-stalling stream eventually gives up instead of looping
+    /// re-resolves. Reset on a fresh play and whenever playback recovers.
+    private var stallRetryCount = 0
+    private let maxStallRetries = 3
 
     /// Resolves a streamed track to a direct URL and plays it instantly via
     /// AVPlayer. EQ (if on) is applied by the real-time tap inside `AVPlayerPath`
@@ -661,7 +693,7 @@ final class PlayerManager: NSObject, ObservableObject {
 
             let resolved: ResolvedStream
             do {
-                resolved = try await self.streamResolver.resolve(for: videoID)
+                resolved = try await self.prefetcher.resolve(for: videoID)
             } catch is CancellationError {
                 return
             } catch {
@@ -678,7 +710,29 @@ final class PlayerManager: NSObject, ObservableObject {
 
             self.currentStreamURL = resolved.url
             self.playAVPlayer(url: resolved.url, knownDuration: resolved.duration)
+            // The current track is on its way; warm the next one so advancing
+            // to it is instant.
+            self.prefetchNext()
         }
+    }
+
+    /// Pre-resolves the next streamed track in the queue (one deep) so
+    /// `playNextInQueue` starts it with no `/api/resolve` round-trip. Local
+    /// files need no resolve and are skipped.
+    private func prefetchNext() {
+        guard let next = queue.first, next.localFileURL == nil, !next.id.isEmpty else { return }
+        let id = next.id
+        Task { [prefetcher] in await prefetcher?.prefetch(id) }
+    }
+
+    /// Best-effort, fire-and-forget ping to `/api/health` to wake a sleeping
+    /// Render free-tier instance before the user's first real request, so the
+    /// cold start (~30–60 s) doesn't fail or stall first play/search. Result is
+    /// ignored.
+    func warmUpBackend() {
+        guard let url = URL(string: "\(Self.backendURL)/api/health") else { return }
+        let session = urlSession
+        Task { _ = try? await session?.data(from: url) }
     }
 
     private func handleFetchError(_ error: Error? = nil) {
@@ -708,6 +762,31 @@ final class PlayerManager: NSObject, ObservableObject {
         playbackState = .idle
         currentStreamURL = nil
         playerError = .streamFailed(error?.localizedDescription ?? "Playback failed")
+    }
+
+    /// Called by `AVPlayerPath`'s stall watchdog when the buffer has stayed
+    /// empty past the grace period. A signed googlevideo URL can go stale or
+    /// the network can dip mid-track; rather than dying to `.idle`, re-resolve
+    /// the same video and resume from the current position. Capped at
+    /// `maxStallRetries`, reset whenever playback actually recovers.
+    func handleStall() {
+        guard let videoID = currentVideoID, stallRetryCount < maxStallRetries else { return }
+        stallRetryCount += 1
+        log.notice("playback stalled; re-resolving \(videoID, privacy: .public) at \(self.currentTime, privacy: .public)s (retry \(self.stallRetryCount, privacy: .public))")
+        seekTarget = clock.currentTime
+        playGeneration += 1
+        let gen = playGeneration
+        playbackState = .loading
+        fetchStreamURL(for: videoID, generation: gen)
+    }
+
+    /// Called by `AVPlayerPath` when the item reports it can keep up again —
+    /// clears the buffering UI and lets both the hard-failure and stall retries
+    /// re-arm for any future, independent interruption.
+    func notePlaybackRecovered() {
+        isRebuffering = false
+        stallRetryCount = 0
+        didRetryResolve = false
     }
 
     // MARK: - AVPlayer path (delegates to AVPlayerPath)

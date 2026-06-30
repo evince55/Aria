@@ -48,23 +48,25 @@ actor StreamResolver: StreamResolving {
             throw StreamResolverError.invalidEndpoint
         }
 
-        let (data, response) = try await session.data(from: endpoint)
-        try Self.validate(response: response, data: data)
+        return try await withRetry(isRetryable: Self.isRetryable) {
+            let (data, response) = try await session.data(from: endpoint)
+            try Self.validate(response: response, data: data)
 
-        guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let streamURLString = json["url"] as? String
-        else {
-            throw StreamResolverError.malformedResponse
+            guard
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let streamURLString = json["url"] as? String
+            else {
+                throw StreamResolverError.malformedResponse
+            }
+
+            guard
+                let streamURL = URL(string: streamURLString, relativeTo: URL(string: backendURL))?.absoluteURL
+            else {
+                throw StreamResolverError.malformedResponse
+            }
+
+            return streamURL
         }
-
-        guard
-            let streamURL = URL(string: streamURLString, relativeTo: URL(string: backendURL))?.absoluteURL
-        else {
-            throw StreamResolverError.malformedResponse
-        }
-
-        return streamURL
     }
 
     /// Returns the direct, immediately-playable stream URL for `videoID` via
@@ -75,20 +77,22 @@ actor StreamResolver: StreamResolving {
             throw StreamResolverError.invalidEndpoint
         }
 
-        let (data, response) = try await session.data(from: endpoint)
-        try Self.validate(response: response, data: data)
+        return try await withRetry(isRetryable: Self.isRetryable) {
+            let (data, response) = try await session.data(from: endpoint)
+            try Self.validate(response: response, data: data)
 
-        guard
-            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let urlString = json["url"] as? String,
-            let url = URL(string: urlString)
-        else {
-            throw StreamResolverError.malformedResponse
+            guard
+                let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let urlString = json["url"] as? String,
+                let url = URL(string: urlString)
+            else {
+                throw StreamResolverError.malformedResponse
+            }
+
+            // `duration` may arrive as Int or Double depending on yt-dlp; accept both.
+            let duration = (json["duration"] as? Double) ?? (json["duration"] as? Int).map(Double.init)
+            return ResolvedStream(url: url, duration: duration)
         }
-
-        // `duration` may arrive as Int or Double depending on yt-dlp; accept both.
-        let duration = (json["duration"] as? Double) ?? (json["duration"] as? Int).map(Double.init)
-        return ResolvedStream(url: url, duration: duration)
     }
 
     private static func validate(response: URLResponse, data: Data) throws {
@@ -96,6 +100,16 @@ actor StreamResolver: StreamResolving {
             let body = String(data: data, encoding: .utf8) ?? "<binary>"
             throw StreamResolverError.serverError(status: http.statusCode, body: body)
         }
+    }
+
+    /// Retry transient network errors plus a 502/503 from Render while it spins
+    /// up from a free-tier cold start. A persistent error surfaces unchanged.
+    static func isRetryable(_ error: Error) -> Bool {
+        if RetryPolicy.isRetryableNetworkError(error) { return true }
+        if case StreamResolverError.serverError(let status, _) = error {
+            return status == 502 || status == 503
+        }
+        return false
     }
 }
 

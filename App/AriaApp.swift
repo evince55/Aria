@@ -56,6 +56,7 @@ struct AriaApp: App {
         WindowGroup {
             ContentView(initialTab: initialTab)
                 .environmentObject(playerManager)
+                .environmentObject(playerManager.clock)
                 .environmentObject(favoritesManager)
                 .environmentObject(playlistsManager)
                 .environmentObject(recentlyPlayedManager)
@@ -64,6 +65,7 @@ struct AriaApp: App {
                 .environmentObject(eqController)
                 .environmentObject(localLibraryManager)
                 .environmentObject(navigationCoordinator)
+                .task { playerManager.warmUpBackend() }
         }
     }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FullScreenPlayerView: View {
     @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var clock: PlaybackClock
     @EnvironmentObject private var favoritesManager: FavoritesManager
     @EnvironmentObject private var playlistsManager: PlaylistsManager
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
@@ -160,21 +161,33 @@ struct FullScreenPlayerView: View {
         VStack(spacing: 4) {
             Slider(
                 value: Binding(
-                    get: { playerManager.currentTime },
+                    get: { clock.currentTime },
                     set: { playerManager.seek(to: $0) }
                 ),
-                in: 0...max(playerManager.duration, 1)
+                in: 0...max(clock.duration, 1)
             ) {
                 Text("Seek")
             }
             .tint(themeManager.theme.accentColor)
 
             HStack {
-                Text(formatTime(playerManager.currentTime))
+                Text(formatTime(clock.currentTime))
                     .font(.caption2)
                     .foregroundColor(themeManager.textSecondary)
                 Spacer()
-                Text("-\(formatTime(max(0, playerManager.duration - playerManager.currentTime)))")
+                if playerManager.isRebuffering {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .scaleEffect(0.7)
+                        Text("Buffering…")
+                            .font(.caption2)
+                            .foregroundColor(themeManager.textSecondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Buffering")
+                    Spacer()
+                }
+                Text("-\(formatTime(max(0, clock.duration - clock.currentTime)))")
                     .font(.caption2)
                     .foregroundColor(themeManager.textSecondary)
             }

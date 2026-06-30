@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MiniPlayerView: View {
     @EnvironmentObject private var playerManager: PlayerManager
+    @EnvironmentObject private var clock: PlaybackClock
     var onTap: () -> Void
 
     var body: some View {
@@ -38,8 +39,32 @@ struct MiniPlayerView: View {
             .padding(.trailing, 8)
             .frame(height: 44)
             .background(.ultraThinMaterial)
+            .overlay(alignment: .top) {
+                if playerManager.currentTrack != nil {
+                    progressBar
+                }
+            }
         }
         .buttonStyle(.plain)
+    }
+
+    /// Thin playback-progress bar pinned to the top edge of the mini player.
+    /// Driven by `clock` (not `playerManager`) so the 4 Hz position tick
+    /// repaints only this 2 pt bar, never the whole view tree.
+    @ViewBuilder
+    private var progressBar: some View {
+        GeometryReader { geo in
+            let fraction = clock.duration > 0
+                ? min(max(clock.currentTime / clock.duration, 0), 1)
+                : 0
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Color.primary.opacity(0.12))
+                Rectangle().fill(Color.primary.opacity(0.55))
+                    .frame(width: geo.size.width * fraction)
+            }
+        }
+        .frame(height: 2)
+        .accessibilityHidden(true)
     }
 
     @ViewBuilder
