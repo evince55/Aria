@@ -46,11 +46,18 @@ final class NowPlayingService {
             MPNowPlayingInfoPropertyElapsedPlaybackTime: player.currentTime,
             MPMediaItemPropertyPlaybackDuration: player.duration,
             MPNowPlayingInfoPropertyPlaybackRate: player.isPlaying ? 1.0 : 0.0,
+            // Media type lets the system treat this as a music item; without it
+            // some lock-screen/CarPlay surfaces won't show transport correctly.
+            MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
         ]
         if let art = MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyArtwork] {
             info[MPMediaItemPropertyArtwork] = art
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        // Give the system an explicit play/pause state (it extrapolates elapsed
+        // time from rate + this anchor). Without it the lock-screen clock keeps
+        // ticking after a pause that didn't originate from the UI.
+        MPNowPlayingInfoCenter.default().playbackState = player.isPlaying ? .playing : .paused
         refreshCommandState()
     }
 
@@ -134,7 +141,8 @@ final class NowPlayingService {
         Task(priority: .userInitiated) {
             let s = AVAudioSession.sharedInstance()
             do {
-                try s.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try s.setCategory(.playback, mode: .default,
+                                  policy: .longFormAudio, options: [])
                 try s.setActive(true)
             } catch {
                 log.error("Audio session activation failed: \(error.localizedDescription, privacy: .public)")

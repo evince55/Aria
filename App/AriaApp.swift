@@ -18,8 +18,13 @@ struct AriaApp: App {
 
     init() {
         do {
+            // A music player should take over audio, not coexist: drop
+            // .mixWithOthers so starting Aria interrupts/ducks other apps, and
+            // declare long-form audio so the system routes it like a music app
+            // (correct AirPlay/CarPlay behaviour, "now playing" ownership).
             try AVAudioSession.sharedInstance().setCategory(
-                .playback, mode: .default, options: [.mixWithOthers]
+                .playback, mode: .default,
+                policy: .longFormAudio, options: []
             )
         } catch {
             log.error("Failed to set audio session category: \(error.localizedDescription, privacy: .public)")

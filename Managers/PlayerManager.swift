@@ -156,6 +156,10 @@ final class PlayerManager: NSObject, ObservableObject {
     /// is created.
     private var pendingResumePosition: TimeInterval?
 
+    /// Whether playback was active when an audio-session interruption began, so
+    /// `.ended` only auto-resumes if we were actually playing beforehand.
+    private var wasPlayingBeforeInterruption = false
+
     /// Tracks played before the current one, oldest first. Powers real
     /// Previous-track navigation. Capped to avoid unbounded growth.
     private var playHistory: [Track] = []
@@ -259,11 +263,18 @@ final class PlayerManager: NSObject, ObservableObject {
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
         switch type {
         case .began:
+            // Remember whether we were actually playing so an interruption that
+            // arrives while already paused doesn't auto-start audio on resume.
+            wasPlayingBeforeInterruption = isPlaying
             pause()
         case .ended:
+            guard wasPlayingBeforeInterruption else { return }
+            wasPlayingBeforeInterruption = false
             if let optRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt {
                 let opts = AVAudioSession.InterruptionOptions(rawValue: optRaw)
                 if opts.contains(.shouldResume) {
+                    // togglePlayPause() re-activates the audio session (which the
+                    // interruption deactivated) before resuming.
                     togglePlayPause()
                 }
             }
@@ -425,6 +436,10 @@ final class PlayerManager: NSObject, ObservableObject {
         isPlaying = false
         playbackState = .paused
         avPlayerPath.pause()
+        // Push the paused state to Now Playing so the lock-screen clock stops
+        // at the right spot — covers pauses that don't go through the UI
+        // (interruptions, route changes), where this used to be skipped.
+        nowPlaying.updateNowPlaying()
         schedulePlaybackSave()
     }
 
