@@ -35,10 +35,16 @@ struct ResolvedStream: Sendable {
 actor StreamResolver: StreamResolving {
     let backendURL: String
     let session: URLSessionProtocol
+    let apiKey: String?
 
-    init(backendURL: String = PlayerManager.backendURL, session: URLSessionProtocol) {
+    init(
+        backendURL: String = PlayerManager.backendURL,
+        session: URLSessionProtocol,
+        apiKey: String? = PlayerManager.apiKey
+    ) {
         self.backendURL = backendURL
         self.session = session
+        self.apiKey = apiKey
     }
 
     /// Returns the absolute stream URL for a given video ID. Throws on
@@ -49,7 +55,7 @@ actor StreamResolver: StreamResolving {
         }
 
         return try await withRetry(isRetryable: Self.isRetryable) {
-            let (data, response) = try await session.data(from: endpoint)
+            let (data, response) = try await session.data(for: .backendGET(endpoint, apiKey: apiKey))
             try Self.validate(response: response, data: data)
 
             guard
@@ -78,7 +84,7 @@ actor StreamResolver: StreamResolving {
         }
 
         return try await withRetry(isRetryable: Self.isRetryable) {
-            let (data, response) = try await session.data(from: endpoint)
+            let (data, response) = try await session.data(for: .backendGET(endpoint, apiKey: apiKey))
             try Self.validate(response: response, data: data)
 
             guard

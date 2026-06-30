@@ -60,6 +60,17 @@ MIN_FREE_DISK_BYTES = int(
 RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_PLAY_PER_MIN = int(os.environ.get("RATE_LIMIT_PLAY_PER_MIN", "60"))
 RATE_LIMIT_SEARCH_PER_MIN = int(os.environ.get("RATE_LIMIT_SEARCH_PER_MIN", "30"))
+RATE_LIMIT_CACHE_PER_MIN = int(os.environ.get("RATE_LIMIT_CACHE_PER_MIN", "5"))
+# Cap on distinct rate-limit keys held in memory. Without this the per-IP
+# request log is an unbounded dict — a stream of distinct (or spoofed) client
+# IPs grows it without limit (memory-exhaustion DoS). Evicted oldest-first.
+RATE_LIMIT_MAX_KEYS = int(os.environ.get("RATE_LIMIT_MAX_KEYS", "10000"))
+# Number of trusted reverse proxies in front of this app. X-Forwarded-For is
+# client-controllable, so only the rightmost N hops — the ones our own proxies
+# appended — are trustworthy. 0 (the default, and correct for the direct
+# Tailscale homelab path) means ignore XFF entirely and use the socket peer.
+# Set to 1 behind a single proxy (e.g. Render) so the real client is read.
+TRUSTED_PROXY_COUNT = int(os.environ.get("TRUSTED_PROXY_COUNT", "0"))
 
 # Auth: set ARIA_API_KEY in the environment to require X-API-Key (or Bearer) on
 # /api/play, /api/search, and DELETE /api/cache. Leave unset to disable auth
@@ -259,10 +270,22 @@ _request_log: dict[str, deque[float]] = defaultdict(deque)
 
 
 def _client_ip(request: Request) -> str:
-    """Return the best-effort client IP, honouring X-Forwarded-For if present."""
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",")[0].strip()
+    """Best-effort client IP for logging and rate limiting.
+
+    X-Forwarded-For is attacker-controllable: any client can prepend fake hops
+    to forge a different rate-limit identity (or hide behind a victim's). Only
+    the rightmost ``TRUSTED_PROXY_COUNT`` entries — appended by reverse proxies
+    we actually run — are trustworthy; the real client sits just to their left.
+    With no trusted proxy configured (the default) we ignore XFF entirely and
+    use the direct socket peer, so a spoofed header can't move the limit.
+    """
+    if TRUSTED_PROXY_COUNT > 0:
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            parts = [p.strip() for p in fwd.split(",") if p.strip()]
+            if parts:
+                idx = max(0, len(parts) - TRUSTED_PROXY_COUNT - 1)
+                return parts[idx]
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
@@ -304,6 +327,24 @@ async def observability_middleware(request: Request, call_next):
     return response
 
 
+def _prune_request_log(now: float) -> None:
+    """Bound the rate-limit table's memory footprint.
+
+    First drop keys whose most-recent hit has aged out of the window (they can
+    never rate-limit anything again). If still over ``RATE_LIMIT_MAX_KEYS``,
+    evict the keys with the oldest activity until back under the cap. Without
+    this, a stream of distinct or spoofed client IPs would grow ``_request_log``
+    without limit — a slow memory-exhaustion DoS."""
+    stale = [k for k, dq in _request_log.items()
+             if not dq or now - dq[-1] > RATE_LIMIT_WINDOW_SECONDS]
+    for k in stale:
+        del _request_log[k]
+    if len(_request_log) > RATE_LIMIT_MAX_KEYS:
+        victims = sorted(_request_log.items(), key=lambda kv: kv[1][-1])
+        for k, _ in victims[: len(_request_log) - RATE_LIMIT_MAX_KEYS]:
+            del _request_log[k]
+
+
 def _enforce_rate_limit(request: Request, key: str, limit: int) -> None:
     """Sliding-window rate limiter. Raises 429 if `key:<ip>` has had
     `limit` or more requests in the last `RATE_LIMIT_WINDOW_SECONDS`."""
@@ -321,6 +362,10 @@ def _enforce_rate_limit(request: Request, key: str, limit: int) -> None:
             headers={"Retry-After": str(RATE_LIMIT_WINDOW_SECONDS)},
         )
     log.append(now)
+    # Keep the table bounded. The scan only fires once we're over the cap, so
+    # the steady-state cost is a dict-size check per request.
+    if len(_request_log) > RATE_LIMIT_MAX_KEYS:
+        _prune_request_log(now)
 
 
 def _require_api_key(request: Request) -> None:
@@ -777,13 +822,20 @@ def _media_type_for(path: Path) -> str:
 @app.get("/api/stream/{file_name}")
 async def stream(file_name: str):
     """Serve a cached audio file with Range request support for AVPlayer seeking."""
+    # Allowlist before any filesystem touch: a cache file is always
+    # "<11-char video id>.<format tag>.<ext>", so the leading segment must be a
+    # valid video ID. This rejects traversal/garbage names up front, on top of
+    # the path-containment check below (defence in depth).
+    video_id = file_name.split(".", 1)[0]
+    if not _VIDEO_ID_RE.match(video_id):
+        raise HTTPException(status_code=400, detail="Invalid file name")
+
     file_path = (CACHE_DIR / file_name).resolve()
     if not file_path.is_relative_to(CACHE_DIR.resolve()):
         raise HTTPException(status_code=400, detail="Invalid file path")
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
 
-    video_id = file_name.split(".", 1)[0]
     _record_access(video_id)
 
     return FileResponse(file_path, media_type=_media_type_for(file_path))
@@ -879,8 +931,14 @@ async def radio(
 
 
 @app.delete("/api/cache")
-async def clear_cache(_auth: None = Depends(_require_api_key)):
-    """Delete all cached audio files. Always requires auth (unprotected = cache-wipe DoW)."""
+async def clear_cache(request: Request, _auth: None = Depends(_require_api_key)):
+    """Delete all cached audio files.
+
+    Auth is opt-in: gated by X-API-Key only when ARIA_API_KEY is set (per
+    project decision, so local dev stays keyless). The rate limit applies
+    regardless, so an unauthenticated deployment still can't be cache-wiped in
+    a tight loop (a forced-redownload / cost-amplification DoW)."""
+    _enforce_rate_limit(request, "cache", RATE_LIMIT_CACHE_PER_MIN)
     global _total_cache_bytes
     count = 0
     for f in CACHE_DIR.glob("*.*"):

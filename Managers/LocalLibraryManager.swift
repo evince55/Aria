@@ -16,6 +16,10 @@ private let log = Logger(subsystem: "com.aria.music", category: "LocalLibraryMan
 @MainActor
 final class LocalLibraryManager: ObservableObject {
 
+    /// Bump when `LocalTrack`'s on-disk shape needs a migration. v1 = first
+    /// versioned envelope (migrated from the legacy bare-array file).
+    static let schemaVersion = 1
+
     @Published private(set) var tracks: [LocalTrack] = []
 
     private let store: KeyValueStore
@@ -387,13 +391,12 @@ final class LocalLibraryManager: ObservableObject {
     private func save() { saveDebouncer.call() }
 
     private func performSave() {
-        guard let data = try? JSONEncoder().encode(tracks) else { return }
+        guard let data = try? SchemaStore.encode(tracks, schemaVersion: Self.schemaVersion) else { return }
         try? store.save(data)
     }
 
     private func load() {
-        guard let data = store.load(),
-              let saved = try? JSONDecoder().decode([LocalTrack].self, from: data) else { return }
+        guard let saved = SchemaStore.loadItems(LocalTrack.self, from: store, currentVersion: Self.schemaVersion) else { return }
         tracks = saved
     }
 }

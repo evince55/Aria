@@ -11,10 +11,16 @@ protocol RadioServing: Sendable {
 actor RadioService: RadioServing {
     let backendURL: String
     let session: URLSessionProtocol
+    let apiKey: String?
 
-    init(backendURL: String = PlayerManager.backendURL, session: URLSessionProtocol) {
+    init(
+        backendURL: String = PlayerManager.backendURL,
+        session: URLSessionProtocol,
+        apiKey: String? = PlayerManager.apiKey
+    ) {
         self.backendURL = backendURL
         self.session = session
+        self.apiKey = apiKey
     }
 
     func similar(to videoID: String, limit: Int = 25) async throws -> [Track] {
@@ -30,7 +36,7 @@ actor RadioService: RadioServing {
         }
 
         return try await withRetry(isRetryable: StreamResolver.isRetryable) {
-            let (data, response) = try await session.data(from: endpoint)
+            let (data, response) = try await session.data(for: .backendGET(endpoint, apiKey: apiKey))
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 throw StreamResolverError.serverError(
                     status: http.statusCode,

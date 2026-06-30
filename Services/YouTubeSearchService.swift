@@ -2,6 +2,7 @@ import Foundation
 
 final class YouTubeSearchService {
     let backendURL: String
+    let apiKey: String?
 
     private lazy var urlSession: URLSession = {
         let config = URLSessionConfiguration.default
@@ -28,8 +29,9 @@ final class YouTubeSearchService {
         }
     }
 
-    init(backendURL: String) {
+    init(backendURL: String, apiKey: String? = PlayerManager.apiKey) {
         self.backendURL = backendURL
+        self.apiKey = apiKey
     }
 
     func cancel() {
@@ -52,7 +54,7 @@ final class YouTubeSearchService {
         // Retry transient failures (timeouts / 502 / 503) so a Render free-tier
         // cold start doesn't fail the user's first search.
         return try await withRetry {
-            let (data, response) = try await urlSession.data(from: url)
+            let (data, response) = try await urlSession.data(for: .backendGET(url, apiKey: apiKey))
 
             if let httpResponse = response as? HTTPURLResponse,
                httpResponse.statusCode >= 400 {

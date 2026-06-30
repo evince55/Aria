@@ -2,6 +2,10 @@ import Foundation
 import Combine
 
 final class RecentlyPlayedManager: ObservableObject {
+    /// Bump when `Track`'s on-disk shape needs a migration. v1 = first
+    /// versioned envelope (migrated from the legacy bare-array files).
+    static let schemaVersion = 1
+
     private let maxTracks = 100
 
     @Published var recentlyPlayed: [Track] = []
@@ -61,22 +65,20 @@ final class RecentlyPlayedManager: ObservableObject {
     }
 
     private func performSavePlayed() {
-        guard let data = try? JSONEncoder().encode(recentlyPlayed) else { return }
+        guard let data = try? SchemaStore.encode(recentlyPlayed, schemaVersion: Self.schemaVersion) else { return }
         try? playedStore.save(data)
     }
 
     private func performSaveAdded() {
-        guard let data = try? JSONEncoder().encode(recentlyAdded) else { return }
+        guard let data = try? SchemaStore.encode(recentlyAdded, schemaVersion: Self.schemaVersion) else { return }
         try? addedStore.save(data)
     }
 
     private func load() {
-        if let data = playedStore.load(),
-           let saved = try? JSONDecoder().decode([Track].self, from: data) {
+        if let saved = SchemaStore.loadItems(Track.self, from: playedStore, currentVersion: Self.schemaVersion) {
             recentlyPlayed = saved
         }
-        if let data = addedStore.load(),
-           let saved = try? JSONDecoder().decode([Track].self, from: data) {
+        if let saved = SchemaStore.loadItems(Track.self, from: addedStore, currentVersion: Self.schemaVersion) {
             recentlyAdded = saved
         }
     }

@@ -16,6 +16,12 @@ protocol KeyValueStore: AnyObject {
     /// because user data is recoverable from `@Published` state on next
     /// launch).
     func save(_ data: Data) throws
+
+    /// Moves undecodable bytes aside so the next `save(_:)` starts clean
+    /// without silently destroying the user's data. Called by the schema
+    /// layer when a load fails to decode (corruption or an unsupported
+    /// future format). Best-effort: failures here are non-fatal.
+    func backupCorrupt(_ data: Data)
 }
 
 /// File-backed implementation. Writes are atomic; reads are best-effort
@@ -43,6 +49,15 @@ final class JSONFileStore: KeyValueStore {
     func save(_ data: Data) throws {
         try AtomicFileWriter.writeAtomically(data, to: url)
     }
+
+    /// Writes the corrupt bytes to a sibling `<file>.corrupt-<unixtime>` so a
+    /// support/debug pass can recover them, then leaves `url` untouched (the
+    /// caller starts from empty state and the next save overwrites it).
+    func backupCorrupt(_ data: Data) {
+        let stamp = Int(Date().timeIntervalSince1970)
+        let backupURL = url.appendingPathExtension("corrupt-\(stamp)")
+        try? data.write(to: backupURL, options: .atomic)
+    }
 }
 
 /// In-memory implementation for tests. Behaves like a tiny key-value
@@ -53,6 +68,9 @@ final class InMemoryKeyValueStore: KeyValueStore {
     /// Counts how many times `save(_:)` was called. Useful for asserting
     /// that the debouncer actually coalesced bursts of writes.
     private(set) var saveCount: Int = 0
+    /// Corrupt payloads handed to `backupCorrupt(_:)`, newest last. Lets tests
+    /// assert that undecodable data was quarantined rather than dropped.
+    private(set) var backedUpCorrupt: [Data] = []
 
     init(seed: Data? = nil) {
         self.data = seed
@@ -63,5 +81,9 @@ final class InMemoryKeyValueStore: KeyValueStore {
     func save(_ data: Data) throws {
         self.data = data
         saveCount += 1
+    }
+
+    func backupCorrupt(_ data: Data) {
+        backedUpCorrupt.append(data)
     }
 }

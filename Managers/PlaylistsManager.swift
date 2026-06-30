@@ -7,6 +7,10 @@ enum PlaylistSortOrder: String, CaseIterable {
 }
 
 final class PlaylistsManager: ObservableObject {
+    /// Bump when `Playlist`'s on-disk shape needs a migration. v1 = first
+    /// versioned envelope (migrated from the legacy bare-array file).
+    static let schemaVersion = 1
+
     @Published var playlists: [Playlist] = [] {
         didSet { recomputeSorted() }
     }
@@ -91,7 +95,7 @@ final class PlaylistsManager: ObservableObject {
     }
 
     private func performSave() {
-        guard let data = try? JSONEncoder().encode(playlists) else { return }
+        guard let data = try? SchemaStore.encode(playlists, schemaVersion: Self.schemaVersion) else { return }
         try? store.save(data)
     }
 
@@ -101,8 +105,7 @@ final class PlaylistsManager: ObservableObject {
     }
 
     private func load() {
-        guard let data = store.load(),
-              let saved = try? JSONDecoder().decode([Playlist].self, from: data) else { return }
+        guard let saved = SchemaStore.loadItems(Playlist.self, from: store, currentVersion: Self.schemaVersion) else { return }
         playlists = saved
     }
 }

@@ -36,7 +36,11 @@ struct AriaApp: App {
         _settingsManager = StateObject(wrappedValue: settings)
         _eqController = StateObject(wrappedValue: eq)
         _localLibraryManager = StateObject(wrappedValue: libraryManager)
-        _playerManager = StateObject(wrappedValue: PlayerManager(urlSession: Self.makeProductionSession(), eq: eq))
+        _playerManager = StateObject(wrappedValue: PlayerManager(
+            urlSession: Self.makeProductionSession(),
+            eq: eq,
+            playbackStore: JSONFileStore(filename: "playback_state.json")
+        ))
     }
 
     private static func makeProductionSession() -> URLSessionProtocol {

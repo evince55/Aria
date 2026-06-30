@@ -30,6 +30,12 @@
 	</dict>
 	<key>ARIA_HOMELAB_HOST</key>
 	<string>192.0.2.1</string>
+	<!-- Backend API key sent as the X-API-Key header. Empty = no auth (opt-in,
+	     off by default). Set your real key here locally and `git update-index
+	     --assume-unchanged` this file so it isn't committed; also set
+	     ARIA_API_KEY in the backend env to actually enforce auth. -->
+	<key>ARIA_API_KEY</key>
+	<string></string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

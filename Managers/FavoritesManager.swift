@@ -2,6 +2,11 @@ import Foundation
 import Combine
 
 final class FavoritesManager: ObservableObject {
+    /// Bump when `Track`'s on-disk shape needs a migration. v1 = first
+    /// versioned envelope (migrated transparently from the legacy bare-array
+    /// file on first load).
+    static let schemaVersion = 1
+
     @Published var tracks: [Track] = [] {
         didSet { recomputeGrouped() }
     }
@@ -65,7 +70,7 @@ final class FavoritesManager: ObservableObject {
     }
 
     private func performSave() {
-        guard let data = try? JSONEncoder().encode(tracks) else { return }
+        guard let data = try? SchemaStore.encode(tracks, schemaVersion: Self.schemaVersion) else { return }
         try? store.save(data)
     }
 
@@ -76,8 +81,7 @@ final class FavoritesManager: ObservableObject {
     }
 
     private func load() {
-        guard let data = store.load(),
-              let saved = try? JSONDecoder().decode([Track].self, from: data) else { return }
+        guard let saved = SchemaStore.loadItems(Track.self, from: store, currentVersion: Self.schemaVersion) else { return }
         tracks = saved
     }
 }

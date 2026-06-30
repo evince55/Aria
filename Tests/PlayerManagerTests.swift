@@ -12,6 +12,9 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
     }
 
     private(set) var recordedRequests: [RecordedRequest] = []
+    /// Full `URLRequest` objects seen via `data(for:)`, so tests can assert on
+    /// headers (e.g. `X-API-Key`).
+    private(set) var recordedRequestObjects: [URLRequest] = []
 
     /// Closure invoked for each `dataTask(with:completionHandler:)` call.
     /// Test sets this to control the response.
@@ -39,6 +42,19 @@ final class MockURLSession: URLSessionProtocol, @unchecked Sendable {
         // no-op since the async path never invokes it.
         let captured = url
         recordedRequests.append(RecordedRequest(url: captured, completionHandler: { _, _, _ in }))
+        if let handler = dataFromHandler {
+            return try await handler(url)
+        }
+        return (Data(), URLResponse(url: url, mimeType: nil, expectedContentLength: 0, textEncodingName: nil))
+    }
+
+    /// Concrete `data(for:)` (overrides the protocol's default bridge) so tests
+    /// can inspect the actual request headers. Still records the URL into
+    /// `recordedRequests` so legacy URL-based assertions keep working.
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        recordedRequestObjects.append(request)
+        let url = request.url ?? URL(string: "about:blank")!
+        recordedRequests.append(RecordedRequest(url: url, completionHandler: { _, _, _ in }))
         if let handler = dataFromHandler {
             return try await handler(url)
         }

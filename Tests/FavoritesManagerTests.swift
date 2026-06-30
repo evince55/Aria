@@ -85,6 +85,42 @@ final class FavoritesManagerTests: XCTestCase {
         XCTAssertEqual(restored.tracks.first?.id, "p1")
     }
 
+    // MARK: - Schema versioning / migration
+
+    func testLoadsLegacyBareArrayFile() {
+        // Pre-versioning files were a bare top-level array. A manager pointed at
+        // such a store must still load the data (transparent migration).
+        let legacy = try! JSONEncoder().encode([
+            Track(id: "old1", title: "Old", artist: "A", thumbnailURL: nil)
+        ])
+        let legacyStore = InMemoryKeyValueStore(seed: legacy)
+        let migrated = FavoritesManager(store: legacyStore)
+        XCTAssertEqual(migrated.tracks.map(\.id), ["old1"])
+    }
+
+    func testRewritesLegacyFileInVersionedFormatOnSave() throws {
+        let legacy = try JSONEncoder().encode([
+            Track(id: "old1", title: "Old", artist: "A", thumbnailURL: nil)
+        ])
+        let legacyStore = InMemoryKeyValueStore(seed: legacy)
+        let migrated = FavoritesManager(store: legacyStore)
+        migrated.add(makeTrack(id: "new1", title: "New"))
+        migrated.flushPendingWrites()
+
+        // The persisted bytes are now the versioned envelope, not a bare array.
+        let data = try XCTUnwrap(legacyStore.load())
+        let env = try JSONDecoder().decode(VersionedEnvelope<Track>.self, from: data)
+        XCTAssertEqual(env.schemaVersion, FavoritesManager.schemaVersion)
+        XCTAssertEqual(env.items.map(\.id), ["old1", "new1"])
+    }
+
+    func testCorruptFileIsQuarantinedAndManagerStartsEmpty() {
+        let garbage = InMemoryKeyValueStore(seed: Data("not json at all }{".utf8))
+        let manager = FavoritesManager(store: garbage)
+        XCTAssertTrue(manager.tracks.isEmpty, "a corrupt file must not crash; start clean")
+        XCTAssertEqual(garbage.backedUpCorrupt.count, 1, "corrupt bytes are preserved for recovery")
+    }
+
     // MARK: - Helpers
 
     private func makeTrack(id: String, title: String) -> Track {

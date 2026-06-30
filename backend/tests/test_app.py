@@ -52,6 +52,8 @@ def test_search_rate_limit_returns_429(client, monkeypatch):
 
 
 def test_rate_limit_is_per_ip(client, monkeypatch):
+    # Behind one trusted proxy, X-Forwarded-For is honoured as the client IP.
+    monkeypatch.setattr(appmod, "TRUSTED_PROXY_COUNT", 1)
     monkeypatch.setattr(appmod, "RATE_LIMIT_SEARCH_PER_MIN", 1)
     monkeypatch.setattr(appmod, "_search_sync", lambda q: [])
     assert client.get("/api/search", params={"q": "a"}, headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 200
@@ -59,6 +61,50 @@ def test_rate_limit_is_per_ip(client, monkeypatch):
     assert client.get("/api/search", params={"q": "a"}, headers={"X-Forwarded-For": "2.2.2.2"}).status_code == 200
     # same IP again is limited
     assert client.get("/api/search", params={"q": "a"}, headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 429
+
+
+def test_xff_ignored_without_trusted_proxy(client, monkeypatch):
+    """Default TRUSTED_PROXY_COUNT=0: a spoofed X-Forwarded-For cannot forge a
+    fresh rate-limit identity — every request collapses onto the socket peer."""
+    monkeypatch.setattr(appmod, "TRUSTED_PROXY_COUNT", 0)
+    monkeypatch.setattr(appmod, "RATE_LIMIT_SEARCH_PER_MIN", 1)
+    monkeypatch.setattr(appmod, "_search_sync", lambda q: [])
+    assert client.get("/api/search", params={"q": "a"}, headers={"X-Forwarded-For": "1.1.1.1"}).status_code == 200
+    # A rotating spoofed XFF does NOT escape the limit — same real peer.
+    assert client.get("/api/search", params={"q": "a"}, headers={"X-Forwarded-For": "9.9.9.9"}).status_code == 429
+
+
+def test_client_ip_picks_hop_left_of_trusted_proxies(monkeypatch):
+    monkeypatch.setattr(appmod, "TRUSTED_PROXY_COUNT", 1)
+
+    class _Req:
+        headers = {"x-forwarded-for": "203.0.113.7, 10.0.0.1"}
+        client = None
+
+    # Rightmost hop (10.0.0.1) is our proxy; the real client is just left of it.
+    assert appmod._client_ip(_Req()) == "203.0.113.7"
+
+
+def test_prune_request_log_bounds_memory(monkeypatch):
+    monkeypatch.setattr(appmod, "RATE_LIMIT_MAX_KEYS", 5)
+    appmod._request_log.clear()
+    now = appmod.time.time()
+    for i in range(20):
+        appmod._request_log[f"play:{i}"].append(now)
+    appmod._prune_request_log(now)
+    assert len(appmod._request_log) <= 5
+    appmod._request_log.clear()
+
+
+def test_prune_request_log_drops_stale_keys(monkeypatch):
+    appmod._request_log.clear()
+    now = appmod.time.time()
+    appmod._request_log["play:fresh"].append(now)
+    appmod._request_log["play:stale"].append(now - appmod.RATE_LIMIT_WINDOW_SECONDS - 1)
+    appmod._prune_request_log(now)
+    assert "play:fresh" in appmod._request_log
+    assert "play:stale" not in appmod._request_log
+    appmod._request_log.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -339,3 +385,37 @@ def test_single_flight_download(cache_dir, monkeypatch):
     results = asyncio.run(hammer())
     assert all(r.status_code == 200 for r in results)
     assert counter["n"] == 1  # only one actual download despite two callers
+
+
+# ---------------------------------------------------------------------------
+# /api/stream filename allowlist
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["short.m4a", "etcpasswd", "0123456789", "toolongvideoid.m4a"])
+def test_stream_rejects_non_video_id_filename(client, name):
+    # Leading segment isn't a valid 11-char video ID → 400 before any FS touch.
+    assert client.get(f"/api/stream/{name}").status_code == 400
+
+
+def test_stream_valid_id_name_missing_file_is_404(client):
+    # Passes the allowlist + path-containment, but the file doesn't exist.
+    r = client.get("/api/stream/dQw4w9WgXcQ.bestaudio.m4a")
+    assert r.status_code == 404
+
+
+def test_stream_serves_valid_cached_file(cache_dir, client):
+    name = f"{appmod._cache_basename('dQw4w9WgXcQ')}.m4a"
+    (cache_dir / name).write_bytes(b"\0" * 32)
+    r = client.get(f"/api/stream/{name}")
+    assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/cache rate limiting
+# ---------------------------------------------------------------------------
+
+def test_cache_delete_is_rate_limited(client, monkeypatch):
+    monkeypatch.setattr(appmod, "RATE_LIMIT_CACHE_PER_MIN", 2)
+    assert client.delete("/api/cache").status_code == 200
+    assert client.delete("/api/cache").status_code == 200
+    assert client.delete("/api/cache").status_code == 429

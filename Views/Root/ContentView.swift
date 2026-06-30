@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject private var playerManager: PlayerManager
@@ -91,13 +92,17 @@ struct ContentView: View {
         }
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .background || newPhase == .inactive {
-                favoritesManager.flushPendingWrites()
-                playlistsManager.flushPendingWrites()
-                recentlyPlayedManager.flushPendingWrites()
-                localLibraryManager.flushPendingWrites()
+                flushAllStores()
             } else if newPhase == .active {
                 localLibraryManager.cleanupOrphans()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.willTerminateNotification
+        )) { _ in
+            // scenePhase doesn't reliably fire .background before a terminate,
+            // so flush here too to shrink the crash/kill data-loss window.
+            flushAllStores()
         }
         .onAppear {
             // Connect favorites so the lock-screen Like command works.
@@ -108,6 +113,18 @@ struct ContentView: View {
                 showFullPlayer = true
             }
         }
+    }
+
+    // MARK: - Persistence
+
+    /// Flush every debounced store so in-flight user data is durable before the
+    /// app is suspended or killed.
+    private func flushAllStores() {
+        favoritesManager.flushPendingWrites()
+        playlistsManager.flushPendingWrites()
+        recentlyPlayedManager.flushPendingWrites()
+        localLibraryManager.flushPendingWrites()
+        playerManager.flushPendingWrites()
     }
 
     // MARK: - Tab Content
