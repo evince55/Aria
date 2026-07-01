@@ -3,14 +3,21 @@ import XCTest
 
 final class PlaylistsManagerTests: XCTestCase {
     private var manager: PlaylistsManager!
+    private var store: InMemoryKeyValueStore!
 
     override func setUp() {
         super.setUp()
-        manager = PlaylistsManager()
+        // Inject an in-memory store so each test is hermetic. (Previously these
+        // used the default file-backed store; they only stayed isolated because
+        // the deinit flush was a silent no-op — once deinit correctly persists,
+        // a shared on-disk playlists.json would bleed state between tests.)
+        store = InMemoryKeyValueStore()
+        manager = PlaylistsManager(store: store)
     }
 
     override func tearDown() {
         manager = nil
+        store = nil
         super.tearDown()
     }
 
@@ -91,6 +98,21 @@ final class PlaylistsManagerTests: XCTestCase {
         manager.addTrack(makeTrack(id: "3", title: "C"), to: p)
         manager.moveTrack(in: p, from: IndexSet(integer: 0), to: 3)
         XCTAssertEqual(manager.playlists.first?.tracks.map(\.id), ["2", "3", "1"])
+    }
+
+    func testDeinitPersistsPendingDebouncedSave() {
+        // Regression for the deinit-flush no-op (see FavoritesManager): a still
+        // -pending debounced write must be persisted synchronously in deinit.
+        let store = InMemoryKeyValueStore()
+        var manager: PlaylistsManager? = PlaylistsManager(store: store)
+        _ = manager?.create(name: "Chill")
+        XCTAssertEqual(store.saveCount, 0, "the save is debounced; nothing written yet")
+
+        manager = nil  // deallocate before the 0.5s debounce fires
+
+        XCTAssertGreaterThan(store.saveCount, 0, "deinit must persist the pending write")
+        let reloaded = PlaylistsManager(store: store)
+        XCTAssertEqual(reloaded.playlists.map(\.name), ["Chill"], "the pending playlist survived deinit")
     }
 
     // MARK: - Helpers

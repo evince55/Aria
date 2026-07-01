@@ -31,7 +31,15 @@ final class PlaylistsManager: ObservableObject {
         recomputeSorted()
     }
 
-    deinit { saveDebouncer?.flush() }
+    deinit {
+        // saveDebouncer.flush() can't help here: its action captures [weak self],
+        // already nil during deinit, so a pending write would be silently dropped.
+        // Persist synchronously instead.
+        if saveDebouncer?.isPending == true {
+            saveDebouncer?.cancel()
+            performSave()
+        }
+    }
 
     func create(name: String) -> Playlist {
         let playlist = Playlist(name: name, tracks: [])

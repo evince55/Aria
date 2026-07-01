@@ -28,8 +28,16 @@ final class RecentlyPlayedManager: ObservableObject {
     }
 
     deinit {
-        playedDebouncer?.flush()
-        addedDebouncer?.flush()
+        // The debouncers' actions capture [weak self], already nil during deinit,
+        // so flush() would silently drop a pending write. Persist synchronously.
+        if playedDebouncer?.isPending == true {
+            playedDebouncer?.cancel()
+            performSavePlayed()
+        }
+        if addedDebouncer?.isPending == true {
+            addedDebouncer?.cancel()
+            performSaveAdded()
+        }
     }
 
     /// Force any pending debounced saves to flush immediately.

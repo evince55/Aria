@@ -121,6 +121,23 @@ final class FavoritesManagerTests: XCTestCase {
         XCTAssertEqual(garbage.backedUpCorrupt.count, 1, "corrupt bytes are preserved for recovery")
     }
 
+    func testDeinitPersistsPendingDebouncedSave() {
+        // Regression for the deinit-flush no-op: `deinit { saveDebouncer?.flush() }`
+        // ran the stored `{ [weak self] in self?.performSave() }` action, but
+        // `self` is already nil during deinit, so a still-pending write was
+        // silently dropped. deinit must persist it synchronously instead.
+        let store = InMemoryKeyValueStore()
+        var manager: FavoritesManager? = FavoritesManager(store: store)
+        manager?.add(makeTrack(id: "1", title: "Alpha"))
+        XCTAssertEqual(store.saveCount, 0, "the save is debounced; nothing written yet")
+
+        manager = nil  // deallocate before the 0.5s debounce fires
+
+        XCTAssertGreaterThan(store.saveCount, 0, "deinit must persist the pending write")
+        let reloaded = FavoritesManager(store: store)
+        XCTAssertEqual(reloaded.tracks.map(\.id), ["1"], "the pending favorite survived deinit")
+    }
+
     // MARK: - Helpers
 
     private func makeTrack(id: String, title: String) -> Track {
