@@ -32,8 +32,18 @@ scp ~/MusicAppIOS/Aria_Music_Browser/backend/app.py \
 ssh eugene@100.76.103.1 "sudo systemctl restart aria-backend"
 ```
 
-> Source of truth moved into the repo (`Aria_Music_Browser/backend/`). The old
-> untracked `~/MusicAppIOS/backend/` copy is superseded — deploy from here.
+> **Deploy from the REPO copy (`Aria_Music_Browser/backend/app.py`), never from
+> the old `~/MusicAppIOS/backend/app.py`.** That untracked root copy is
+> superseded; deploying it ships pre-#7 code (no `/api/metrics`, no pagination,
+> none of the security patches). On 2026-06-30 the running homelab service was
+> found stuck on that stale copy for exactly this reason. The root `app.py` has
+> since been removed and replaced with a `DO_NOT_DEPLOY_FROM_HERE.txt` pointer.
+>
+> Verify a deploy actually took: `curl http://100.76.103.1:8000/api/metrics`
+> returns `200` (not `404`) and `/api/health` includes `version` + `uptime_seconds`.
+>
+> The systemd unit runs as **`User=eugene`** from **`/home/eugene/MusicAppIOS/backend`**
+> (see `aria-backend.service`).
 
 ## Endpoints
 
