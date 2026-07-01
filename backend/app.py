@@ -821,6 +821,30 @@ def _is_valid_media(path: Path) -> bool:
         return False
 
 
+def _cleanup_partials_for(video_id: str) -> int:
+    """Remove *this* video's interrupted-download artifacts (*.part/.ytdl/etc).
+
+    Scoped to one video_id so it never touches another request's in-flight
+    download. Called on the /api/play failure path: aborted or oversized
+    downloads otherwise leak partials that `_evict_if_needed` skips and that
+    are uncounted by `_total_cache_bytes`, so only the startup sweep would
+    reclaim them — between restarts they accumulate and eventually trip the
+    disk-full 507 permanently."""
+    removed = 0
+    for pattern in (f"{_cache_basename(video_id)}.*", f"{video_id}.*"):
+        for f in CACHE_DIR.glob(pattern):
+            if not f.is_file():
+                continue
+            name = f.name.lower()
+            if any(name.endswith(s) for s in _PARTIAL_SUFFIXES):
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError:
+                    pass
+    return removed
+
+
 def _cleanup_partial_files() -> int:
     """Remove interrupted-download artifacts and zero-byte files. Returns the
     number removed. Called on startup; '.'-dotfiles like the access-times JSON
@@ -955,6 +979,7 @@ async def play(
     except Exception as e:
         _metrics["failures_by_reason"]["download_error"] += 1
         logger.error("Download failed for %s: %s", video_id, e)
+        _cleanup_partials_for(video_id)
         raise HTTPException(status_code=502, detail=f"Download failed: {str(e)}")
     finally:
         event.set()
@@ -976,6 +1001,7 @@ async def play(
         except OSError:
             pass
         _metrics["failures_by_reason"]["invalid_media"] += 1
+    _cleanup_partials_for(video_id)
     raise HTTPException(status_code=502, detail="Failed to download valid audio")
 
 

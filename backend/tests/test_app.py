@@ -315,6 +315,38 @@ def test_cleanup_removes_partial_artifacts(cache_dir):
     assert keep.exists()
 
 
+def test_play_failure_sweeps_this_videos_partials(cache_dir, client, monkeypatch):
+    """A download that aborts/oversizes leaves a *.part that eviction skips and
+    only the startup sweep reclaims → unbounded growth toward a persistent 507.
+    The /api/play failure path must sweep this video's own partials at request
+    time."""
+    vid = "dQw4w9WgXcQ"
+    partial = cache_dir / f"{appmod._cache_basename(vid)}.bestaudio.m4a.part"
+
+    def fake_dl(v):
+        partial.write_bytes(b"\0" * 4096)  # interrupted download artifact
+        raise RuntimeError("Read timed out")
+
+    monkeypatch.setattr(appmod, "_download_with_retry", fake_dl)
+    r = client.get("/api/play", params={"video_id": vid})
+    assert r.status_code == 502
+    assert not partial.exists()
+
+
+def test_play_failure_leaves_other_videos_partials(cache_dir, client, monkeypatch):
+    """The request-time sweep is scoped to the failing video_id — a different
+    video's in-flight partial must never be deleted."""
+    other = cache_dir / f"{appmod._cache_basename('otherVid123')}.bestaudio.m4a.part"
+    other.write_bytes(b"\0" * 4096)
+
+    def fake_dl(v):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(appmod, "_download_with_retry", fake_dl)
+    client.get("/api/play", params={"video_id": "dQw4w9WgXcQ"})
+    assert other.exists()
+
+
 # ---------------------------------------------------------------------------
 # format-aware cache key (deterministic extension preference)
 # ---------------------------------------------------------------------------
