@@ -925,4 +925,192 @@ final class LocalLibraryManagerTests: XCTestCase {
         XCTAssertEqual(track.durationSeconds, 0,
                        "duration should fall back to 0 when metadata extraction fails")
     }
+
+    // MARK: - Remote cover fallback (/api/cover wiring)
+
+    /// A `CoverFetching` test double that never touches the network: returns
+    /// a canned `Data?` and records every invocation's arguments.
+    private final class MockCoverFetcher: CoverFetching {
+        var result: Data?
+        private(set) var callCount = 0
+        private(set) var lastTitle: String?
+        private(set) var lastArtist: String?
+        private(set) var lastDuration: Double?
+
+        init(result: Data?) {
+            self.result = result
+        }
+
+        func fetchCoverImageData(title: String, artist: String?, durationSeconds: Double?) async -> Data? {
+            callCount += 1
+            lastTitle = title
+            lastArtist = artist
+            lastDuration = durationSeconds
+            return result
+        }
+    }
+
+    func test_import_noEmbeddedArtwork_fetchesRemoteCover_andWritesFile() async throws {
+        let fetcher = MockCoverFetcher(result: jpegBytes)
+        let m = LocalLibraryManager(
+            store: InMemoryKeyValueStore(),
+            libraryDirectory: libraryDir,
+            coverFetcher: fetcher
+        )
+        let source = try makeSourceFile()
+        let track = try await m.importFile(at: source)
+
+        XCTAssertEqual(fetcher.callCount, 1, "remote cover fetch should run exactly once for a coverless track")
+        XCTAssertNotNil(track.artworkFileName, "track should end up with a remote-fetched cover file name")
+        XCTAssertTrue(track.artworkFileName!.hasSuffix(".jpg"))
+
+        let resolved = m.artworkURL(for: track)
+        XCTAssertNotNil(resolved)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: resolved!.path),
+                      "the fetched image bytes should be written to the resolved artwork URL")
+        XCTAssertEqual(try Data(contentsOf: resolved!), jpegBytes)
+    }
+
+    func test_import_remoteCoverFetcher_returnsNil_leavesTrackCoverless_noCrash() async throws {
+        let fetcher = MockCoverFetcher(result: nil)
+        let m = LocalLibraryManager(
+            store: InMemoryKeyValueStore(),
+            libraryDirectory: libraryDir,
+            coverFetcher: fetcher
+        )
+        let source = try makeSourceFile()
+        let track = try await m.importFile(at: source)
+
+        XCTAssertEqual(fetcher.callCount, 1)
+        XCTAssertNil(track.artworkFileName, "a miss from the remote fetcher should leave the track coverless")
+        XCTAssertNil(m.artworkURL(for: track))
+    }
+
+    /// A `CoverFetching` double that throws-equivalent behavior (returns nil)
+    /// to simulate a network failure — the seam never surfaces errors, so
+    /// "throwing" is represented as a nil result. Exercises the same
+    /// no-crash guarantee as the returns-nil case, from a distinctly-named
+    /// test per the assignment's "throwing" scenario.
+    private final class FailingCoverFetcher: CoverFetching {
+        private(set) var callCount = 0
+        func fetchCoverImageData(title: String, artist: String?, durationSeconds: Double?) async -> Data? {
+            callCount += 1
+            return nil
+        }
+    }
+
+    func test_import_remoteCoverFetcher_failure_leavesTrackCoverless_noCrash() async throws {
+        let fetcher = FailingCoverFetcher()
+        let m = LocalLibraryManager(
+            store: InMemoryKeyValueStore(),
+            libraryDirectory: libraryDir,
+            coverFetcher: fetcher
+        )
+        let source = try makeSourceFile()
+        let track = try await m.importFile(at: source)
+
+        XCTAssertEqual(fetcher.callCount, 1)
+        XCTAssertNil(track.artworkFileName)
+    }
+
+    func test_import_embeddedArtworkPresent_doesNotCallRemoteFetcher_notOverwritten() async throws {
+        // Embedded extraction succeeds (injected loader yields PNG bytes);
+        // the remote fetcher must never be consulted, and must not
+        // overwrite the embedded cover.
+        let embeddedPNG = pngBytes
+        let fetcher = MockCoverFetcher(result: jpegBytes)
+        let m = LocalLibraryManager(
+            store: InMemoryKeyValueStore(),
+            libraryDirectory: libraryDir,
+            loadArtworkData: { _ in embeddedPNG },
+            coverFetcher: fetcher
+        )
+        let source = try makeSourceFile()
+        let track = try await m.importFile(at: source)
+
+        XCTAssertEqual(fetcher.callCount, 0, "remote cover fetch must be skipped when embedded artwork was found")
+        XCTAssertNotNil(track.artworkFileName)
+        XCTAssertTrue(track.artworkFileName!.hasSuffix(".png"), "artwork should be the embedded PNG, not a remote fallback")
+
+        let resolved = m.artworkURL(for: track)
+        XCTAssertEqual(try Data(contentsOf: resolved!), embeddedPNG)
+    }
+
+    func test_backfillRemoteCovers_existingCoverlessTrack_getsRemoteCoverOnNextInit() async throws {
+        // Seed a store with one coverless track (no artworkFileName, and no
+        // artwork file on disk) plus a present audio file, then construct a
+        // manager with a mock fetcher and confirm the backfill pass attaches
+        // a cover.
+        let id = UUID()
+        let fileName = "\(id.uuidString).mp3"
+        try FileManager.default.createDirectory(at: libraryDir, withIntermediateDirectories: true)
+        try Data(repeating: 0x42, count: 512).write(to: libraryDir.appendingPathComponent(fileName))
+
+        let seeded = LocalTrack(
+            id: id, title: "No Cover", artist: "Some Artist",
+            artworkFileName: nil,
+            fileName: fileName, importedAt: Date(),
+            fileSizeBytes: 512, durationSeconds: 180
+        )
+        let seed = try JSONEncoder().encode(
+            VersionedEnvelope(schemaVersion: LocalLibraryManager.schemaVersion, items: [seeded])
+        )
+        let fetcher = MockCoverFetcher(result: jpegBytes)
+        let m = LocalLibraryManager(
+            store: InMemoryKeyValueStore(seed: seed),
+            libraryDirectory: libraryDir,
+            coverFetcher: fetcher
+        )
+
+        // Wait for the fire-and-forget backfill Task.
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertEqual(fetcher.callCount, 1, "backfill should attempt exactly one remote fetch for the coverless track")
+        XCTAssertEqual(fetcher.lastTitle, "No Cover")
+        XCTAssertEqual(fetcher.lastArtist, "Some Artist")
+        XCTAssertEqual(fetcher.lastDuration, 180)
+
+        let track = m.tracks.first { $0.id == id }
+        XCTAssertNotNil(track?.artworkFileName)
+        let resolved = m.artworkURL(for: track!)
+        XCTAssertNotNil(resolved)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: resolved!.path))
+    }
+
+    func test_backfillRemoteCovers_trackAlreadyHasArtwork_isNotOverwritten() async throws {
+        // A track that already has a cover file on disk must not be
+        // touched by the backfill pass at all.
+        let artName = "\(UUID().uuidString).jpg"
+        let artworkDir = libraryDir.appendingPathComponent("artwork", isDirectory: true)
+        try FileManager.default.createDirectory(at: artworkDir, withIntermediateDirectories: true)
+        let existingBytes = jpegBytes
+        try existingBytes.write(to: artworkDir.appendingPathComponent(artName))
+
+        let id = UUID()
+        let fileName = "\(id.uuidString).mp3"
+        try Data(repeating: 0x42, count: 512).write(to: libraryDir.appendingPathComponent(fileName))
+        let seeded = LocalTrack(
+            id: id, title: "Has Cover", artist: "Artist",
+            artworkFileName: artName,
+            fileName: fileName, importedAt: Date(),
+            fileSizeBytes: 512, durationSeconds: 200
+        )
+        let seed = try JSONEncoder().encode(
+            VersionedEnvelope(schemaVersion: LocalLibraryManager.schemaVersion, items: [seeded])
+        )
+        let fetcher = MockCoverFetcher(result: pngBytes)
+        let m = LocalLibraryManager(
+            store: InMemoryKeyValueStore(seed: seed),
+            libraryDirectory: libraryDir,
+            coverFetcher: fetcher
+        )
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        XCTAssertEqual(fetcher.callCount, 0, "a track that already has artwork on disk must never trigger a remote fetch")
+        let track = m.tracks.first { $0.id == id }
+        XCTAssertEqual(track?.artworkFileName, artName, "existing artwork file name must remain unchanged")
+        let resolved = m.artworkURL(for: track!)
+        XCTAssertEqual(try Data(contentsOf: resolved!), existingBytes, "existing artwork bytes must not be overwritten")
+    }
 }

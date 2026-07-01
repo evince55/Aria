@@ -42,6 +42,90 @@ extension AVURLAsset: MetadataLoading {
     }
 }
 
+/// The result of a remote cover lookup, mirroring the backend's
+/// `GET /api/cover` JSON shape (`{"cover_url": <url>|null, "source":
+/// "itunes"|"youtube"|null}`). `source` is decoded but currently unused by
+/// the caller; kept for parity/debuggability.
+struct RemoteCoverResult: Decodable, Equatable {
+    let coverURL: URL?
+    let source: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case coverURL = "cover_url"
+        case source
+    }
+}
+
+/// Fetches a best-effort remote cover image for a (title, artist, duration)
+/// triple, expressed as a plain async function so tests can inject a double
+/// that never touches the network (mirroring `MetadataLoading` /
+/// `loadArtworkData`'s testability seam). Returns raw image bytes, or nil on
+/// any miss/failure — this seam never throws.
+protocol CoverFetching {
+    func fetchCoverImageData(title: String, artist: String?, durationSeconds: Double?) async -> Data?
+}
+
+/// Production implementation: calls the backend's `/api/cover` endpoint,
+/// then downloads the returned image URL. Best-effort end to end — any
+/// network/decode error along the way yields `nil` rather than throwing.
+struct BackendCoverFetcher: CoverFetching {
+    /// Short timeout so a slow/unreachable backend never blocks import or
+    /// the self-heal pass for long.
+    private static let requestTimeout: TimeInterval = 8
+
+    func fetchCoverImageData(title: String, artist: String?, durationSeconds: Double?) async -> Data? {
+        guard let coverURL = await lookupCoverURL(title: title, artist: artist, durationSeconds: durationSeconds) else {
+            return nil
+        }
+        return await downloadImageData(from: coverURL)
+    }
+
+    private func lookupCoverURL(title: String, artist: String?, durationSeconds: Double?) async -> URL? {
+        var components = URLComponents(string: "\(PlayerManager.backendURL)/api/cover")
+        var queryItems = [URLQueryItem(name: "title", value: title)]
+        // A title-only query is low quality; still attempt it if the track
+        // genuinely has no usable artist (nil / empty / the local-import
+        // placeholder "This Device"), since a title-only hit is still better
+        // than no cover at all.
+        if let artist, !artist.isEmpty, artist != "This Device" {
+            queryItems.append(URLQueryItem(name: "artist", value: artist))
+        }
+        if let durationSeconds, durationSeconds > 0 {
+            queryItems.append(URLQueryItem(name: "duration", value: String(durationSeconds)))
+        }
+        components?.queryItems = queryItems
+        guard let url = components?.url else { return nil }
+
+        var request = URLRequest(url: url, timeoutInterval: Self.requestTimeout)
+        if let apiKey = PlayerManager.apiKey, !apiKey.isEmpty {
+            request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
+            let decoded = try JSONDecoder().decode(RemoteCoverResult.self, from: data)
+            return decoded.coverURL
+        } catch {
+            return nil
+        }
+    }
+
+    private func downloadImageData(from url: URL) async -> Data? {
+        var request = URLRequest(url: url, timeoutInterval: Self.requestTimeout)
+        if let apiKey = PlayerManager.apiKey, !apiKey.isEmpty {
+            request.setValue(apiKey, forHTTPHeaderField: "X-API-Key")
+        }
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200, !data.isEmpty else { return nil }
+            return data
+        } catch {
+            return nil
+        }
+    }
+}
+
 /// Owns the on-disk "imported from Files" library. Tracks the metadata
 /// of every file the user has imported (UUID, title, file size,
 /// import date) and copies the actual audio files into a stable
@@ -71,6 +155,10 @@ final class LocalLibraryManager: ObservableObject {
     /// the self-heal path is unit-testable without real audio fixtures; the
     /// default reads the file via `AVURLAsset` + `loadArtworkData`.
     private let loadArtworkData: (URL) async -> Data?
+    /// Fetches a best-effort remote cover for tracks with no embedded
+    /// artwork. Injectable so tests never hit the network; the default is
+    /// `BackendCoverFetcher`, which calls the `/api/cover` backend endpoint.
+    private let coverFetcher: CoverFetching
     private var saveDebouncer: Debouncer!
 
     /// Runtime location for sample-data files. Sibling to
@@ -85,7 +173,8 @@ final class LocalLibraryManager: ObservableObject {
         libraryDirectory: URL,
         fileManager: FileManager = .default,
         isCloudFileNotDownloaded: @escaping (URL) -> Bool = LocalLibraryManager.defaultIsCloudFileNotDownloaded(_:),
-        loadArtworkData: @escaping (URL) async -> Data? = LocalLibraryManager.defaultLoadArtworkData(from:)
+        loadArtworkData: @escaping (URL) async -> Data? = LocalLibraryManager.defaultLoadArtworkData(from:),
+        coverFetcher: CoverFetching = BackendCoverFetcher()
     ) {
         self.store = store
         self.libraryDirectory = libraryDirectory
@@ -94,6 +183,7 @@ final class LocalLibraryManager: ObservableObject {
         self.fileManager = fileManager
         self.isCloudFileNotDownloaded = isCloudFileNotDownloaded
         self.loadArtworkData = loadArtworkData
+        self.coverFetcher = coverFetcher
         self.saveDebouncer = Debouncer(delay: 0.5) { [weak self] in self?.performSave() }
         try? fileManager.createDirectory(at: libraryDirectory, withIntermediateDirectories: true)
         try? fileManager.createDirectory(at: sampleDataDirectory, withIntermediateDirectories: true)
@@ -101,6 +191,7 @@ final class LocalLibraryManager: ObservableObject {
         auditMissingFlags()
         cleanupOrphans()
         healMissingArtwork()
+        backfillRemoteCovers()
         importSampleDataIfPresent()
     }
 
@@ -203,7 +294,12 @@ final class LocalLibraryManager: ObservableObject {
         let album = await Self.readAlbum(at: destURL)
         let storedSize = (try? fileManager.attributesOfItem(atPath: destURL.path)[.size] as? Int64) ?? Int64(original.count)
         let duration = await Self.readDuration(at: destURL)
-        let artworkFileName = await extractArtwork(from: destURL, trackID: id)
+        var artworkFileName = await extractArtwork(from: destURL, trackID: id)
+        if artworkFileName == nil {
+            artworkFileName = await fetchRemoteCover(
+                trackID: id, title: title, artist: artist, durationSeconds: duration
+            )
+        }
 
         let track = LocalTrack(
             id: id,
@@ -519,6 +615,103 @@ final class LocalLibraryManager: ObservableObject {
         // Re-find the index (array may have shifted) and patch in place.
         guard let idx = tracks.firstIndex(where: { $0.id == id }) else { return }
         let current = tracks[idx]
+        tracks[idx] = LocalTrack(
+            id: current.id,
+            title: current.title,
+            artist: current.artist,
+            artworkFileName: name,
+            fileName: current.fileName,
+            importedAt: current.importedAt,
+            fileSizeBytes: current.fileSizeBytes,
+            durationSeconds: current.durationSeconds,
+            album: current.album,
+            isMissing: current.isMissing
+        )
+        save()
+    }
+
+    // MARK: - Remote cover fallback (/api/cover)
+
+    /// Track IDs a remote-cover fetch has already been attempted for during
+    /// this process lifetime. Prevents `backfillRemoteCovers` from
+    /// re-attempting the same failed lookup in a loop within one launch; a
+    /// track that failed here is still retried on the *next* launch (this
+    /// set is not persisted), per the "best-effort, offline-safe" contract.
+    private var attemptedRemoteCoverTrackIDs: Set<UUID> = []
+
+    /// Best-effort remote cover fetch for a track that has no embedded
+    /// artwork. Builds the `/api/cover` query from title/artist/duration,
+    /// downloads the returned image (if any), writes it via the same
+    /// `writeArtwork` helper used for embedded extraction, and returns the
+    /// bare on-disk file name — or nil on any miss/failure. Never throws.
+    private func fetchRemoteCover(
+        trackID: UUID,
+        title: String,
+        artist: String?,
+        durationSeconds: Double?
+    ) async -> String? {
+        attemptedRemoteCoverTrackIDs.insert(trackID)
+        guard let data = await coverFetcher.fetchCoverImageData(
+            title: title, artist: artist, durationSeconds: durationSeconds
+        ), !data.isEmpty else {
+            return nil
+        }
+        return writeArtwork(data: data, trackID: trackID)
+    }
+
+    /// Opportunistically fills in remote covers for existing tracks that
+    /// have no artwork at all (no embedded art was ever extracted, and
+    /// `healMissingArtwork` above didn't find any to re-extract either).
+    /// Fire-and-forget, off the main actor's synchronous init path, debounced
+    /// save; needs network — a no-op when offline, retried on the next
+    /// launch. Guards against refetching tracks that already have a cover
+    /// file, and against attempting a track more than once per launch.
+    private func backfillRemoteCovers() {
+        let candidates = tracks.compactMap { track -> UUID? in
+            // Skip tracks that already have artwork on disk.
+            if let art = artworkURL(for: track), fileManager.fileExists(atPath: art.path) {
+                return nil
+            }
+            guard !attemptedRemoteCoverTrackIDs.contains(track.id) else { return nil }
+            return track.id
+        }
+        guard !candidates.isEmpty else { return }
+
+        Task { [weak self] in
+            guard let self else { return }
+            for id in candidates {
+                await self.backfillRemoteCover(for: id)
+            }
+        }
+    }
+
+    /// Backfills a remote cover for a single existing track id, if it still
+    /// has none. No-op if the track vanished, already has on-disk artwork,
+    /// or the remote fetch misses. Best-effort; never throws.
+    private func backfillRemoteCover(for id: UUID) async {
+        guard let track = tracks.first(where: { $0.id == id }) else { return }
+        // Re-check on-disk state (it may have been healed/backfilled since snapshot).
+        if let art = artworkURL(for: track), fileManager.fileExists(atPath: art.path) {
+            return
+        }
+
+        guard let name = await fetchRemoteCover(
+            trackID: track.id,
+            title: track.title,
+            artist: track.artist,
+            durationSeconds: track.durationSeconds
+        ) else {
+            return
+        }
+
+        // Re-find the index (array may have shifted) and patch in place.
+        guard let idx = tracks.firstIndex(where: { $0.id == id }) else { return }
+        let current = tracks[idx]
+        // Don't clobber artwork that arrived (e.g. via healMissingArtwork)
+        // while this fetch was in flight.
+        if let art = artworkURL(for: current), fileManager.fileExists(atPath: art.path) {
+            return
+        }
         tracks[idx] = LocalTrack(
             id: current.id,
             title: current.title,
