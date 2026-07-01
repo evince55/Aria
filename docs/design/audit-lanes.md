@@ -16,7 +16,7 @@ the same file, they are the *same lane* and run sequentially — never in parall
 | Lane | Owns (write-set) | Repo | Tracker sections | Active branch | Status |
 |---|---|---|---|---|---|
 | **llmops** | `tools/llmops/**` | aria-llmops | (telemetry / evals / routing-loop) | — | idle |
-| **backend** | `backend/**` (esp. `app.py`), `Aria---Music-Browser-Info.plist` (ATS), `Services/TLSPinningDelegate.swift`, `.github/workflows/**` | Aria | Backend — Cache & Reliability · Security & Abuse · Streaming & Latency | — | idle |
+| **backend** | `backend/**` (esp. `app.py`), `Aria---Music-Browser-Info.plist` (ATS), `Services/TLSPinningDelegate.swift`, `.github/workflows/**` | Aria | Backend — Cache & Reliability · Security & Abuse · Streaming & Latency | `feat/backend-cover-art` | claimed |
 | **playback** | `Managers/PlayerManager.swift`, `Services/AVPlayerPath.swift`, `Services/NowPlayingService.swift`, `Services/StreamResolver.swift`, `Services/RadioService.swift`, `Managers/EQ*`, queue logic | Aria | iOS — Playback Engine · System Integration · Networking & Offline; Product — Feature Gaps (shuffle/repeat/prev/sleep-timer/speed) | — | idle |
 | **data** | `Managers/KeyValueStore.swift`, `Services/AtomicFileWriter.swift`, `Managers/LocalLibraryManager.swift`, `Models/*` stores, schema/migrations, queue persistence | Aria | iOS — Data, Queue & Persistence | — | idle |
 | **ui** | `Views/**`, `Resources/DesignSystem*`, `ThemeManager`, `Services/AsyncCachedImage.swift`, Dynamic Type, VoiceOver, iPad | Aria | iOS — UX, Architecture & Accessibility; iOS — Search & Discovery (UI) | — | idle |
