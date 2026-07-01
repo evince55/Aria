@@ -27,9 +27,10 @@ final class RecentlyPlayedManager: ObservableObject {
         load()
     }
 
+    // flush() is a no-op in deinit (its [weak self] is already nil); save direct.
     deinit {
-        playedDebouncer?.flush()
-        addedDebouncer?.flush()
+        if playedDebouncer?.isPending == true { performSavePlayed() }
+        if addedDebouncer?.isPending == true { performSaveAdded() }
     }
 
     /// Force any pending debounced saves to flush immediately.

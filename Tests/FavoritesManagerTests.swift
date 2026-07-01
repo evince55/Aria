@@ -39,6 +39,20 @@ final class FavoritesManagerTests: XCTestCase {
         XCTAssertFalse(manager.isFavorite(track))
     }
 
+    func testDeinitFlushesPendingSave() {
+        // A mutation queues a debounced save; deallocating before it fires (and
+        // before any scenePhase/willTerminate flush) must still persist it — the
+        // old `deinit { flush() }` dropped it because flush()'s [weak self] was
+        // already nil.
+        let deinitStore = InMemoryKeyValueStore()
+        var transient: FavoritesManager? = FavoritesManager(store: deinitStore)
+        transient?.add(makeTrack(id: "42", title: "Pending"))
+        transient = nil  // release → deinit → performSave()
+
+        let reloaded = FavoritesManager(store: deinitStore)
+        XCTAssertEqual(reloaded.tracks.map(\.id), ["42"])
+    }
+
     func testRemoveByTrack() {
         let track = makeTrack(id: "1", title: "Alpha")
         manager.add(track)

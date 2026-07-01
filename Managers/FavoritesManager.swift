@@ -16,7 +16,10 @@ final class FavoritesManager: ObservableObject {
     private let store: KeyValueStore
     private var saveDebouncer: Debouncer!
 
-    deinit { saveDebouncer?.flush() }
+    // NB: can't use saveDebouncer.flush() here — it invokes the init closure's
+    // `[weak self]`, which is already nil during deinit, so a pending save would
+    // be silently dropped. Call performSave() directly instead.
+    deinit { if saveDebouncer?.isPending == true { performSave() } }
 
     init(store: KeyValueStore = JSONFileStore(filename: "favorites.json")) {
         self.store = store
