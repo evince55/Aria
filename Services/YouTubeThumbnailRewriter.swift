@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 /// Rewrites YouTube thumbnail URLs to higher-quality versions.
 ///
@@ -22,11 +23,17 @@ import Foundation
 enum YouTubeThumbnailRewriter {
     private static let pattern = #"https?://i\.ytimg\.com/vi/([^/]+)/"#
 
-    /// Returns candidate YouTube thumbnail URLs ordered by quality
-    /// (highest first), or `[url]` if the URL doesn't match the YouTube
-    /// CDN pattern. The caller should try them in order and fall back
-    /// on failure.
-    static func upgradedURLs(for url: URL) -> [URL] {
+    /// Returns candidate YouTube thumbnail URLs ordered by quality (highest
+    /// first), or `[url]` if the URL doesn't match the YouTube CDN pattern. The
+    /// caller tries them in order, falling back on 404.
+    ///
+    /// `targetSize` is the display size in points; the primary candidate is the
+    /// smallest YouTube variant that still covers it at ~3× (so a 48pt row pulls
+    /// a 320×180 `mqdefault` instead of a 1280×720 `maxresdefault` — real
+    /// bytes-over-the-wire savings). `hqdefault` (480×360, always present) is
+    /// appended as a guaranteed fallback since `maxres`/`sd` 404 on old videos.
+    /// `targetSize <= 0` keeps the legacy "maxres then hq" behavior.
+    static func upgradedURLs(for url: URL, targetSize: CGFloat = 0) -> [URL] {
         let absolute = url.absoluteString
         guard let regex = try? NSRegularExpression(pattern: pattern) else {
             return [url]
@@ -39,12 +46,27 @@ enum YouTubeThumbnailRewriter {
             return [url]
         }
         let videoID = String(absolute[videoIDRange])
-        let maxres = URL(string: "https://i.ytimg.com/vi/\(videoID)/maxresdefault.jpg")
-        let hq = URL(string: "https://i.ytimg.com/vi/\(videoID)/hqdefault.jpg")
+
+        let variants: [String]
+        if targetSize <= 0 {
+            variants = ["maxresdefault", "hqdefault"]
+        } else {
+            let primary: String
+            switch targetSize {
+            case ..<64:  primary = "mqdefault"      // 320×180
+            case ..<160: primary = "hqdefault"      // 480×360
+            case ..<214: primary = "sddefault"      // 640×480
+            default:     primary = "maxresdefault"  // 1280×720
+            }
+            variants = primary == "hqdefault" ? ["hqdefault"] : [primary, "hqdefault"]
+        }
+
         var result: [URL] = []
-        if let maxres, maxres != url { result.append(maxres) }
-        if let hq, hq != url { result.append(hq) }
-        if result.isEmpty { return [url] }
-        return result
+        for name in variants {
+            if let u = URL(string: "https://i.ytimg.com/vi/\(videoID)/\(name).jpg"), u != url {
+                result.append(u)
+            }
+        }
+        return result.isEmpty ? [url] : result
     }
 }

@@ -52,7 +52,14 @@ final class LibraryViewModel: ObservableObject {
 
     @Published private(set) var tracks: [LocalTrack] = []
 
+    /// Cached, recomputed only when tracks/search/sort/group actually change
+    /// (via the Combine pipeline below) rather than re-filtered/-sorted/-grouped
+    /// on every SwiftUI body pass.
+    @Published private(set) var filteredAndSortedTracks: [LocalTrack] = []
+    @Published private(set) var sections: [LibrarySection] = []
+
     private let library: LocalLibraryManager
+    private var cancellables = Set<AnyCancellable>()
 
     init(
         library: LocalLibraryManager,
@@ -63,31 +70,43 @@ final class LibraryViewModel: ObservableObject {
         self.sortOrder = initialSortOrder
         self.groupBy = initialGroupBy
         library.$tracks.assign(to: &$tracks)
-    }
 
-    var filteredAndSortedTracks: [LocalTrack] {
-        let filtered: [LocalTrack]
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if query.isEmpty {
-            filtered = tracks
-        } else {
-            filtered = tracks.filter { track in
-                track.title.range(of: query, options: .caseInsensitive) != nil
-                    || (track.artist?.range(of: query, options: .caseInsensitive) != nil)
+        // Recompute the derived lists once per input change. CombineLatest4
+        // fires synchronously with the current values on subscription, so the
+        // cached properties are populated immediately.
+        Publishers.CombineLatest4($tracks, $searchText, $sortOrder, $groupBy)
+            .map { tracks, query, order, group in
+                let sorted = Self.filterSort(tracks, query: query, order: order)
+                return (sorted, Self.makeSections(sorted, groupBy: group))
             }
-        }
-        return sort(filtered, by: sortOrder)
+            .sink { [weak self] sorted, sections in
+                self?.filteredAndSortedTracks = sorted
+                self?.sections = sections
+            }
+            .store(in: &cancellables)
     }
 
-    var sections: [LibrarySection] {
-        let tracks = filteredAndSortedTracks
+    private static func filterSort(
+        _ tracks: [LocalTrack], query rawQuery: String, order: LibrarySortOrder
+    ) -> [LocalTrack] {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filtered = query.isEmpty ? tracks : tracks.filter { track in
+            track.title.range(of: query, options: .caseInsensitive) != nil
+                || (track.artist?.range(of: query, options: .caseInsensitive) != nil)
+        }
+        return sort(filtered, by: order)
+    }
+
+    private static func makeSections(
+        _ tracks: [LocalTrack], groupBy: LibraryGroupBy
+    ) -> [LibrarySection] {
         switch groupBy {
         case .none:
             return [LibrarySection(id: "all", title: "", tracks: tracks)]
         case .album:
-            return Self.sectionsBy(tracks, key: { $0.album })
+            return sectionsBy(tracks, key: { $0.album })
         case .artist:
-            return Self.sectionsBy(tracks, key: { $0.artist })
+            return sectionsBy(tracks, key: { $0.artist })
         }
     }
 
@@ -111,7 +130,7 @@ final class LibraryViewModel: ObservableObject {
 
     private static let unknownKey = "\u{1F}unknown"
 
-    private func sort(_ tracks: [LocalTrack], by order: LibrarySortOrder) -> [LocalTrack] {
+    private static func sort(_ tracks: [LocalTrack], by order: LibrarySortOrder) -> [LocalTrack] {
         switch order {
         case .recentlyAdded:
             return tracks.sorted { $0.importedAt > $1.importedAt }

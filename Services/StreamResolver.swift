@@ -102,20 +102,24 @@ actor StreamResolver: StreamResolving {
     }
 
     private static func validate(response: URLResponse, data: Data) throws {
-        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-            let body = String(data: data, encoding: .utf8) ?? "<binary>"
-            throw StreamResolverError.serverError(status: http.statusCode, body: body)
+        guard let http = response as? HTTPURLResponse,
+              !(200..<300).contains(http.statusCode) else { return }
+        // 429/502/503 are transient — throw the retryable status (carrying any
+        // Retry-After) so withRetry backs off and retries instead of failing.
+        if [429, 502, 503].contains(http.statusCode) {
+            throw RetryPolicy.RetryableHTTPStatus(
+                statusCode: http.statusCode,
+                retryAfter: RetryPolicy.retryAfter(from: http)
+            )
         }
+        let body = String(data: data, encoding: .utf8) ?? "<binary>"
+        throw StreamResolverError.serverError(status: http.statusCode, body: body)
     }
 
-    /// Retry transient network errors plus a 502/503 from Render while it spins
-    /// up from a free-tier cold start. A persistent error surfaces unchanged.
+    /// Retry transient network errors and transient HTTP statuses (429/502/503).
+    /// A persistent error surfaces unchanged.
     static func isRetryable(_ error: Error) -> Bool {
-        if RetryPolicy.isRetryableNetworkError(error) { return true }
-        if case StreamResolverError.serverError(let status, _) = error {
-            return status == 502 || status == 503
-        }
-        return false
+        RetryPolicy.isRetryableNetworkError(error)
     }
 }
 

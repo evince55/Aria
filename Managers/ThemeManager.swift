@@ -72,7 +72,10 @@ struct DesignTokens {
     }
 
     var textSecondary: Color {
-        isDark ? Color(white: 0.62) : Color(white: 0.45)
+        // Light 0.45→0.40 lifts secondary text on the ~0.96 background from
+        // ~4.35:1 to ~5.2:1, clearing the WCAG AA 4.5:1 threshold for small
+        // text. Dark (0.62 on ~0.10) is already ~6:1.
+        isDark ? Color(white: 0.62) : Color(white: 0.40)
     }
 
     var dividerColor: Color {

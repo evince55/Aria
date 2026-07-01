@@ -19,6 +19,9 @@ struct Track: Identifiable, Codable, Hashable {
     /// metadata). Optional so legacy persisted tracks decode to `nil` without a
     /// schema migration; surfaced in lists/rows.
     var duration: Double?
+    /// Album name when known (from local-file metadata). Optional so legacy
+    /// persisted tracks decode to `nil` without a schema migration.
+    var album: String?
 
     init(
         id: String,
@@ -27,7 +30,8 @@ struct Track: Identifiable, Codable, Hashable {
         thumbnailURL: URL? = nil,
         localFileURL: URL? = nil,
         isMissing: Bool = false,
-        duration: Double? = nil
+        duration: Double? = nil,
+        album: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -36,10 +40,11 @@ struct Track: Identifiable, Codable, Hashable {
         self.localFileURL = localFileURL
         self.isMissing = isMissing
         self.duration = duration
+        self.album = album
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, artist, thumbnailURL, localFileURL, isMissing, duration
+        case id, title, artist, thumbnailURL, localFileURL, isMissing, duration, album
     }
 
     init(from decoder: Decoder) throws {
@@ -51,6 +56,7 @@ struct Track: Identifiable, Codable, Hashable {
         self.localFileURL = try c.decodeIfPresent(URL.self, forKey: .localFileURL)
         self.isMissing = try c.decodeIfPresent(Bool.self, forKey: .isMissing) ?? false
         self.duration = try c.decodeIfPresent(Double.self, forKey: .duration)
+        self.album = try c.decodeIfPresent(String.self, forKey: .album)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -62,6 +68,7 @@ struct Track: Identifiable, Codable, Hashable {
         try c.encodeIfPresent(localFileURL, forKey: .localFileURL)
         try c.encode(isMissing, forKey: .isMissing)
         try c.encodeIfPresent(duration, forKey: .duration)
+        try c.encodeIfPresent(album, forKey: .album)
     }
 
     var isLocal: Bool { localFileURL != nil }

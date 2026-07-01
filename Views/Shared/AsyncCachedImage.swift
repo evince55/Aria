@@ -94,18 +94,16 @@ struct AsyncCachedImage<Placeholder: View>: View {
     /// URLs this is `[maxresdefault.jpg, hqdefault.jpg]` so we get the
     /// highest available quality with a guaranteed fallback.
     ///
-    /// Note: this still requests the maxres-upgraded URL first regardless
-    /// of `targetSize` — the rewriter (`YouTubeThumbnailRewriter.swift`,
-    /// outside this lane's write-set) has no per-call target-size input,
-    /// so even a 36pt mini-player thumbnail still downloads a maxres
-    /// source today. Decode-time downsampling (below) still avoids
-    /// holding the full-resolution *decoded* bitmap in memory, which is
-    /// the more expensive half of the cost, but wiring the requested
-    /// pixel size through to the URL rewriter to also shrink the
-    /// *download* is a follow-up for whichever lane owns that file.
+    /// The requested `targetSize` is passed to the rewriter so the *download*
+    /// resolution is chosen to fit the display size (small rows pull a
+    /// `mqdefault`/`hqdefault`, the full-screen player pulls `maxresdefault`),
+    /// on top of the decode-time downsampling below that keeps the full-res
+    /// decoded bitmap out of memory.
     private var candidates: [URL] {
         guard let url else { return [] }
-        let upgraded = YouTubeThumbnailRewriter.upgradedURLs(for: url)
+        // Pass the display size so the rewriter also shrinks the *download*,
+        // not just the decode — a small row no longer pulls a 1280×720 JPEG.
+        let upgraded = YouTubeThumbnailRewriter.upgradedURLs(for: url, targetSize: targetSize)
         return upgraded.isEmpty ? [url] : upgraded
     }
 

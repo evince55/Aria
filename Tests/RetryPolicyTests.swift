@@ -16,6 +16,30 @@ final class RetryPolicyTests: XCTestCase {
         XCTAssertTrue(RetryPolicy.isRetryableNetworkError(RetryPolicy.RetryableHTTPStatus(statusCode: 503)))
     }
 
+    func test_isRetryable_429() {
+        XCTAssertTrue(RetryPolicy.isRetryableNetworkError(RetryPolicy.RetryableHTTPStatus(statusCode: 429)))
+    }
+
+    func test_retryAfter_parsesIntegerSeconds() {
+        let resp = HTTPURLResponse(
+            url: URL(string: "http://x")!, statusCode: 429, httpVersion: nil,
+            headerFields: ["Retry-After": "7"]
+        )!
+        XCTAssertEqual(RetryPolicy.retryAfter(from: resp), 7)
+    }
+
+    func test_retryAfter_absentOrInvalidIsNil() {
+        let noHeader = HTTPURLResponse(
+            url: URL(string: "http://x")!, statusCode: 200, httpVersion: nil, headerFields: [:]
+        )!
+        XCTAssertNil(RetryPolicy.retryAfter(from: noHeader))
+        let httpDate = HTTPURLResponse(
+            url: URL(string: "http://x")!, statusCode: 429, httpVersion: nil,
+            headerFields: ["Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"]
+        )!
+        XCTAssertNil(RetryPolicy.retryAfter(from: httpDate))
+    }
+
     func test_isNotRetryable_clientErrorsAndBadURL() {
         XCTAssertFalse(RetryPolicy.isRetryableNetworkError(RetryPolicy.RetryableHTTPStatus(statusCode: 404)))
         XCTAssertFalse(RetryPolicy.isRetryableNetworkError(URLError(.badURL)))

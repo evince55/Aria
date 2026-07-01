@@ -14,16 +14,35 @@ enum RetryPolicy {
     /// retried closure should throw this for retryable statuses.
     struct RetryableHTTPStatus: LocalizedError {
         let statusCode: Int
+        /// When the server sent a `Retry-After`, the backoff honors it instead
+        /// of the exponential schedule.
+        var retryAfter: TimeInterval?
+
+        init(statusCode: Int, retryAfter: TimeInterval? = nil) {
+            self.statusCode = statusCode
+            self.retryAfter = retryAfter
+        }
+
         var errorDescription: String? {
-            "The server is starting up (HTTP \(statusCode)). Please try again in a moment."
+            statusCode == 429
+                ? "The server is busy (HTTP 429). Retrying shortly."
+                : "The server is starting up (HTTP \(statusCode)). Please try again in a moment."
         }
     }
 
+    /// Parses a `Retry-After` header (integer seconds form) into a delay.
+    static func retryAfter(from response: HTTPURLResponse) -> TimeInterval? {
+        guard let raw = response.value(forHTTPHeaderField: "Retry-After"),
+              let seconds = TimeInterval(raw.trimmingCharacters(in: .whitespaces)),
+              seconds >= 0 else { return nil }
+        return seconds
+    }
+
     /// True for errors worth retrying: connection/timeout `URLError`s and
-    /// 502/503 gateway statuses. Never 4xx, never decode/malformed errors.
+    /// 429/502/503 statuses. Never other 4xx, never decode/malformed errors.
     static func isRetryableNetworkError(_ error: Error) -> Bool {
         if let status = error as? RetryableHTTPStatus {
-            return status.statusCode == 502 || status.statusCode == 503
+            return status.statusCode == 429 || status.statusCode == 502 || status.statusCode == 503
         }
         if let urlError = error as? URLError {
             switch urlError.code {
@@ -64,7 +83,11 @@ func withRetry<T>(
             if attempt >= maxAttempts || !isRetryable(error) {
                 throw error
             }
-            let delay = baseDelay * pow(3, Double(attempt - 1))
+            // Honor a server-provided Retry-After (429) over the exponential
+            // schedule, capped so a hostile/huge value can't hang the app.
+            let backoff = baseDelay * pow(3, Double(attempt - 1))
+            let serverDelay = (error as? RetryPolicy.RetryableHTTPStatus)?.retryAfter
+            let delay = min(serverDelay ?? backoff, 30)
             try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
         }
     }

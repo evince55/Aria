@@ -160,7 +160,9 @@ struct LocalTrack: Identifiable, Codable, Hashable {
             artist: artist ?? "This Device",
             thumbnailURL: artworkURL ?? self.artworkURL,
             localFileURL: fileURL,
-            isMissing: isMissing
+            isMissing: isMissing,
+            duration: durationSeconds,
+            album: album
         )
     }
 }

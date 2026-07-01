@@ -62,8 +62,11 @@ final class YouTubeSearchService {
 
             if let httpResponse = response as? HTTPURLResponse,
                httpResponse.statusCode >= 400 {
-                if httpResponse.statusCode == 502 || httpResponse.statusCode == 503 {
-                    throw RetryPolicy.RetryableHTTPStatus(statusCode: httpResponse.statusCode)
+                if [429, 502, 503].contains(httpResponse.statusCode) {
+                    throw RetryPolicy.RetryableHTTPStatus(
+                        statusCode: httpResponse.statusCode,
+                        retryAfter: RetryPolicy.retryAfter(from: httpResponse)
+                    )
                 }
                 let message = String(data: data, encoding: .utf8) ?? "Server error"
                 throw ServiceError.serverError(message)
