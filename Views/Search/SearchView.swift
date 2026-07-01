@@ -290,16 +290,14 @@ struct SearchView: View {
                     .listRowBackground(tokens.background)
                     .listRowSeparatorTint(tokens.hairline)
                     .listRowInsets(EdgeInsets(top: 4, leading: DS.Spacing.md, bottom: 4, trailing: DS.Spacing.md))
-                    .onAppear {
-                        // Infinite scroll: when the last row appears, pull the
-                        // next page.
-                        if track.id == tracks.last?.id {
-                            Task { await loadMore() }
-                        }
-                    }
                 }
 
-                if isLoadingMore {
+                // Infinite scroll: a persistent footer row shown whenever more
+                // pages may exist. Scrolling it into view both drives the next
+                // fetch and keeps the spinner reliably visible on every page —
+                // not just the first (a per-last-row .onAppear trigger fired
+                // while this row was off-screen, so loads 2+ showed no spinner).
+                if canLoadMore {
                     HStack {
                         Spacer()
                         ProgressView()
@@ -307,6 +305,7 @@ struct SearchView: View {
                     }
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
+                    .onAppear { Task { await loadMore() } }
                 }
             }
         }
