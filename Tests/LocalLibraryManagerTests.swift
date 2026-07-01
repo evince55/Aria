@@ -1113,4 +1113,33 @@ final class LocalLibraryManagerTests: XCTestCase {
         let resolved = m.artworkURL(for: track!)
         XCTAssertEqual(try Data(contentsOf: resolved!), existingBytes, "existing artwork bytes must not be overwritten")
     }
+
+    // MARK: - /api/cover query resolution
+
+    func testCoverQueryUsesRealArtistVerbatim() {
+        let q = BackendCoverFetcher.coverQuery(title: "Tadow", artist: "FKJ")
+        XCTAssertEqual(q.title, "Tadow")
+        XCTAssertEqual(q.artist, "FKJ")
+    }
+
+    func testCoverQuerySplitsArtistTitleWhenNoUsableArtist() {
+        // No artist tag → split "Artist - Title" on the first " - ".
+        for artist in [nil, "", "This Device"] as [String?] {
+            let q = BackendCoverFetcher.coverQuery(title: "Fkj & Masego - Tadow", artist: artist)
+            XCTAssertEqual(q.artist, "Fkj & Masego")
+            XCTAssertEqual(q.title, "Tadow")
+        }
+    }
+
+    func testCoverQuerySplitsOnlyFirstSeparator() {
+        let q = BackendCoverFetcher.coverQuery(title: "Drake - Laugh Now - Cry Later", artist: nil)
+        XCTAssertEqual(q.artist, "Drake")
+        XCTAssertEqual(q.title, "Laugh Now - Cry Later")
+    }
+
+    func testCoverQueryTitleOnlyWhenNoArtistAndNoSeparator() {
+        let q = BackendCoverFetcher.coverQuery(title: "Untitled", artist: nil)
+        XCTAssertEqual(q.title, "Untitled")
+        XCTAssertNil(q.artist)
+    }
 }

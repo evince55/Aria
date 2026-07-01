@@ -80,15 +80,32 @@ struct BackendCoverFetcher: CoverFetching {
         return await downloadImageData(from: coverURL)
     }
 
-    private func lookupCoverURL(title: String, artist: String?, durationSeconds: Double?) async -> URL? {
-        var components = URLComponents(string: "\(PlayerManager.backendURL)/api/cover")
-        var queryItems = [URLQueryItem(name: "title", value: title)]
-        // A title-only query is low quality; still attempt it if the track
-        // genuinely has no usable artist (nil / empty / the local-import
-        // placeholder "This Device"), since a title-only hit is still better
-        // than no cover at all.
+    /// Resolves the best `(title, artist)` to send to `/api/cover`. Many local
+    /// files have no separate artist tag (or the local-import placeholder
+    /// "This Device") and instead carry the artist in the title as
+    /// "Artist - Title" — so when there's no usable artist we split the title on
+    /// the first " - ". The backend requires an artist, and iTunes matches far
+    /// better with one, so this is what makes title-tagged local files resolve.
+    static func coverQuery(title: String, artist: String?) -> (title: String, artist: String?) {
         if let artist, !artist.isEmpty, artist != "This Device" {
-            queryItems.append(URLQueryItem(name: "artist", value: artist))
+            return (title, artist)
+        }
+        if let range = title.range(of: " - ") {
+            let left = title[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+            let right = title[range.upperBound...].trimmingCharacters(in: .whitespaces)
+            if !left.isEmpty, !right.isEmpty {
+                return (right, left)
+            }
+        }
+        return (title, nil)
+    }
+
+    private func lookupCoverURL(title: String, artist: String?, durationSeconds: Double?) async -> URL? {
+        let q = BackendCoverFetcher.coverQuery(title: title, artist: artist)
+        var components = URLComponents(string: "\(PlayerManager.backendURL)/api/cover")
+        var queryItems = [URLQueryItem(name: "title", value: q.title)]
+        if let qArtist = q.artist {
+            queryItems.append(URLQueryItem(name: "artist", value: qArtist))
         }
         if let durationSeconds, durationSeconds > 0 {
             queryItems.append(URLQueryItem(name: "duration", value: String(durationSeconds)))
