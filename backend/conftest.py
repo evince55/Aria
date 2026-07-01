@@ -28,6 +28,7 @@ def cache_dir(tmp_path, monkeypatch):
     appmod._request_log.clear()
     appmod._download_events.clear()
     appmod._search_cache.clear()
+    appmod._cover_cache.clear()
     appmod._reset_metrics()
     return d
 

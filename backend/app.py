@@ -7,6 +7,8 @@ import re
 import shutil
 import subprocess
 import time
+import urllib.parse
+import urllib.request
 import uuid
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
@@ -61,6 +63,7 @@ RATE_LIMIT_WINDOW_SECONDS = 60
 RATE_LIMIT_PLAY_PER_MIN = int(os.environ.get("RATE_LIMIT_PLAY_PER_MIN", "60"))
 RATE_LIMIT_SEARCH_PER_MIN = int(os.environ.get("RATE_LIMIT_SEARCH_PER_MIN", "30"))
 RATE_LIMIT_CACHE_PER_MIN = int(os.environ.get("RATE_LIMIT_CACHE_PER_MIN", "5"))
+RATE_LIMIT_COVER_PER_MIN = int(os.environ.get("RATE_LIMIT_COVER_PER_MIN", "30"))
 # Cap on distinct rate-limit keys held in memory. Without this the per-IP
 # request log is an unbounded dict — a stream of distinct (or spoofed) client
 # IPs grows it without limit (memory-exhaustion DoS). Evicted oldest-first.
@@ -271,6 +274,15 @@ _SEARCH_CACHE_TTL: float = float(os.environ.get("SEARCH_CACHE_TTL", "60"))
 SEARCH_PAGE_MAX = int(os.environ.get("SEARCH_PAGE_MAX", "50"))
 SEARCH_FETCH_MAX = int(os.environ.get("SEARCH_FETCH_MAX", "100"))
 MAX_QUERY_LEN = int(os.environ.get("MAX_QUERY_LEN", "200"))
+
+# Cover-art lookup cache. Covers rarely change, so a long TTL (days, not
+# seconds) is fine and keeps repeat lookups for the same track free — one
+# outbound iTunes/YouTube call per (title, artist, duration-bucket) per TTL
+# window. Bounded like the rate-limit table so an endless stream of distinct
+# titles/artists can't grow this dict without limit.
+_cover_cache: dict[str, tuple[dict, float]] = {}
+_COVER_CACHE_TTL: float = float(os.environ.get("COVER_CACHE_TTL", str(60 * 60 * 24 * 7)))  # 7 days
+COVER_CACHE_MAX_KEYS = int(os.environ.get("COVER_CACHE_MAX_KEYS", "10000"))
 
 # Per-key request log for rate limiting. Keyed by "<endpoint>:<client-ip>".
 _request_log: dict[str, deque[float]] = defaultdict(deque)
@@ -588,6 +600,150 @@ def _radio_sync(seed_video_id: str, limit: int) -> list[dict]:
         for e in entries
         if e.get("id") and e.get("id") != seed_video_id
     ]
+
+
+# ---------------------------------------------------------------------------
+# Cover-art lookup
+# ---------------------------------------------------------------------------
+COVER_HTTP_TIMEOUT_SECONDS = float(os.environ.get("COVER_HTTP_TIMEOUT_SECONDS", "5"))
+_ITUNES_ARTWORK_SIZE_RE = re.compile(r"\d+x\d+bb\.jpg$")
+
+
+def _itunes_search_sync(term: str) -> list[dict]:
+    """Query the iTunes Search API for candidate tracks (runs in executor).
+
+    No API key required. Raises on network/HTTP error or malformed JSON; the
+    caller treats any exception as "no result" and falls back to YouTube.
+    """
+    qs = urllib.parse.urlencode({
+        "term": term,
+        "entity": "song",
+        "limit": 5,
+        "media": "music",
+    })
+    url = f"https://itunes.apple.com/search?{qs}"
+    req = urllib.request.Request(url, headers={"User-Agent": "AriaBackend/1.0"})
+    with urllib.request.urlopen(req, timeout=COVER_HTTP_TIMEOUT_SECONDS) as resp:
+        data = json.loads(resp.read().decode("utf-8"))
+    return data.get("results") or []
+
+
+def _youtube_thumbnail_sync(term: str) -> Optional[str]:
+    """Fall back to a YouTube thumbnail via the same ytsearch/extract_flat
+    machinery /api/search uses. Returns None on no match; propagates
+    exceptions so the caller can log/degrade gracefully."""
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "extract_flat": True,
+        "socket_timeout": YTDL_SOCKET_TIMEOUT,
+    }
+    runtimes = _js_runtimes()
+    if runtimes:
+        ydl_opts["js_runtimes"] = runtimes
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        result = ydl.extract_info(f"ytsearch1:{term}", download=False)
+
+    entries = result.get("entries") or []
+    if not entries:
+        return None
+    e = entries[0]
+    if not e.get("id"):
+        return None
+    return e.get("thumbnail") or f"https://i.ytimg.com/vi/{e['id']}/hqdefault.jpg"
+
+
+def _normalize_match_text(s: str) -> str:
+    return re.sub(r"\s+", " ", s or "").strip().casefold()
+
+
+def _upscale_itunes_artwork(url: str) -> str:
+    """Rewrite the trailing '<W>x<H>bb.jpg' artwork-size suffix to 600x600."""
+    if _ITUNES_ARTWORK_SIZE_RE.search(url):
+        return _ITUNES_ARTWORK_SIZE_RE.sub("600x600bb.jpg", url)
+    return url
+
+
+def _pick_best_itunes_result(results: list[dict], artist: str,
+                              duration_seconds: Optional[float]) -> Optional[dict]:
+    """Pick the best iTunes candidate.
+
+    Prefer results whose artist matches (casefolded, whitespace-normalized);
+    among those (or all, if none match), break ties by closeness of
+    trackTimeMillis to the supplied duration — this avoids picking a live
+    version/wrong release when several tracks share a title+artist.
+    """
+    candidates = [r for r in results if r.get("artworkUrl100")]
+    if not candidates:
+        return None
+
+    norm_artist = _normalize_match_text(artist)
+    artist_matches = [
+        r for r in candidates
+        if _normalize_match_text(r.get("artistName", "")) == norm_artist
+    ]
+    pool = artist_matches or candidates
+
+    if duration_seconds is not None and len(pool) > 1:
+        target_ms = duration_seconds * 1000
+
+        def dist(r):
+            t = r.get("trackTimeMillis")
+            if t is None:
+                return float("inf")
+            return abs(t - target_ms)
+
+        pool = sorted(pool, key=dist)
+
+    return pool[0]
+
+
+def _prune_cover_cache() -> None:
+    """Bound the cover-art cache: drop TTL-expired entries first, then evict
+    oldest-inserted if still over COVER_CACHE_MAX_KEYS."""
+    now = time.time()
+    stale = [k for k, (_, ts) in _cover_cache.items() if now - ts > _COVER_CACHE_TTL]
+    for k in stale:
+        del _cover_cache[k]
+    if len(_cover_cache) > COVER_CACHE_MAX_KEYS:
+        victims = sorted(_cover_cache.items(), key=lambda kv: kv[1][1])
+        for k, _ in victims[: len(_cover_cache) - COVER_CACHE_MAX_KEYS]:
+            del _cover_cache[k]
+
+
+def _cover_cache_key(title: str, artist: str, duration_seconds: Optional[float]) -> str:
+    """Normalized (title, artist, duration-bucket) cache key. Duration is
+    bucketed to the nearest 5s so near-identical client-reported durations
+    still hit the same cache entry."""
+    bucket = "" if duration_seconds is None else str(int(round(duration_seconds / 5.0)))
+    return f"{_normalize_match_text(title)}\x00{_normalize_match_text(artist)}\x00{bucket}"
+
+
+def _lookup_cover_sync(title: str, artist: str, duration_seconds: Optional[float]) -> dict:
+    """Synchronous cover lookup (runs in executor): iTunes first, YouTube
+    thumbnail as fallback. Never raises — any failure degrades to a null
+    result so the endpoint never 500s on a flaky upstream."""
+    term = f"{artist} {title}".strip()
+
+    try:
+        results = _itunes_search_sync(term)
+        best = _pick_best_itunes_result(results, artist, duration_seconds)
+        if best:
+            return {
+                "cover_url": _upscale_itunes_artwork(best["artworkUrl100"]),
+                "source": "itunes",
+            }
+    except Exception as e:
+        logger.warning("iTunes cover lookup failed for %r: %s", term, e)
+
+    try:
+        thumb = _youtube_thumbnail_sync(term)
+        if thumb:
+            return {"cover_url": thumb, "source": "youtube"}
+    except Exception as e:
+        logger.warning("YouTube cover fallback failed for %r: %s", term, e)
+
+    return {"cover_url": None, "source": None}
 
 
 # ---------------------------------------------------------------------------
@@ -945,6 +1101,53 @@ async def radio(
         raise HTTPException(status_code=502, detail=f"Radio failed: {str(e)}")
 
     return results
+
+
+@app.get("/api/cover")
+async def cover(
+    request: Request,
+    title: str = Query(..., description="Track title"),
+    artist: str = Query(..., description="Track artist"),
+    duration: Optional[float] = Query(
+        None, description="Track duration in seconds, used to break ties between releases"
+    ),
+    _auth: None = Depends(_require_api_key),
+):
+    """
+    Look up the best album-cover image URL for a (title, artist[, duration])
+    triple — used to populate artwork for local/offline tracks with no
+    embedded cover art.
+
+    Primary source is the iTunes Search API (upscaled to 600x600, no API
+    key); if that yields nothing, falls back to a YouTube search thumbnail
+    (ytsearch1, the same machinery /api/search uses). Always returns 200 with
+    ``{"cover_url": <url or null>, "source": "itunes"|"youtube"|null}`` —
+    never 404/500 on a miss or upstream failure, so the client can treat
+    every response uniformly.
+    """
+    _enforce_rate_limit(request, "cover", RATE_LIMIT_COVER_PER_MIN)
+
+    title = title.strip()[:MAX_QUERY_LEN]
+    artist = artist.strip()[:MAX_QUERY_LEN]
+    if not title or not artist:
+        return {"cover_url": None, "source": None}
+
+    cache_key = _cover_cache_key(title, artist, duration)
+    now = time.time()
+    cached = _cover_cache.get(cache_key)
+    if cached and now - cached[1] < _COVER_CACHE_TTL:
+        return cached[0]
+
+    async with _ytdl_search_semaphore:
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None, _lookup_cover_sync, title, artist, duration
+        )
+
+    _cover_cache[cache_key] = (result, now)
+    if len(_cover_cache) > COVER_CACHE_MAX_KEYS:
+        _prune_cover_cache()
+    return result
 
 
 @app.delete("/api/cache")

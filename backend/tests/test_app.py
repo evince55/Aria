@@ -460,3 +460,111 @@ def test_cache_delete_is_rate_limited(client, monkeypatch):
     assert client.delete("/api/cache").status_code == 200
     assert client.delete("/api/cache").status_code == 200
     assert client.delete("/api/cache").status_code == 429
+
+
+# ---------------------------------------------------------------------------
+# GET /api/cover
+# ---------------------------------------------------------------------------
+
+def _itunes_result(track_name="Song", artist_name="Artist",
+                    artwork="https://is1-ssl.mzstatic.com/image/thumb/x/100x100bb.jpg",
+                    track_time_millis=200000):
+    return {
+        "trackName": track_name,
+        "artistName": artist_name,
+        "artworkUrl100": artwork,
+        "trackTimeMillis": track_time_millis,
+    }
+
+
+def test_cover_itunes_hit_returns_upscaled_url_and_source(client, monkeypatch):
+    monkeypatch.setattr(
+        appmod, "_itunes_search_sync",
+        lambda term: [_itunes_result()],
+    )
+    r = client.get("/api/cover", params={"title": "Song", "artist": "Artist"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "itunes"
+    assert body["cover_url"] == "https://is1-ssl.mzstatic.com/image/thumb/x/600x600bb.jpg"
+
+
+def test_cover_duration_tie_break_picks_closest_track(client, monkeypatch):
+    # Two candidates for the same title/artist but different releases (e.g. a
+    # live version); the one whose trackTimeMillis is closest to the supplied
+    # duration should win.
+    candidates = [
+        _itunes_result(artwork="https://x/live/100x100bb.jpg", track_time_millis=300000),
+        _itunes_result(artwork="https://x/studio/100x100bb.jpg", track_time_millis=201000),
+    ]
+    monkeypatch.setattr(appmod, "_itunes_search_sync", lambda term: candidates)
+    r = client.get("/api/cover", params={"title": "Song", "artist": "Artist", "duration": 200})
+    assert r.status_code == 200
+    assert r.json()["cover_url"] == "https://x/studio/600x600bb.jpg"
+
+
+def test_cover_itunes_miss_falls_back_to_youtube(client, monkeypatch):
+    monkeypatch.setattr(appmod, "_itunes_search_sync", lambda term: [])
+    monkeypatch.setattr(
+        appmod, "_youtube_thumbnail_sync",
+        lambda term: "https://i.ytimg.com/vi/abc123/hqdefault.jpg",
+    )
+    r = client.get("/api/cover", params={"title": "Obscure Song", "artist": "Nobody"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "youtube"
+    assert body["cover_url"] == "https://i.ytimg.com/vi/abc123/hqdefault.jpg"
+
+
+def test_cover_both_miss_returns_null(client, monkeypatch):
+    monkeypatch.setattr(appmod, "_itunes_search_sync", lambda term: [])
+    monkeypatch.setattr(appmod, "_youtube_thumbnail_sync", lambda term: None)
+    r = client.get("/api/cover", params={"title": "Nothing", "artist": "Nobody"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["cover_url"] is None
+    assert body["source"] is None
+
+
+def test_cover_itunes_malformed_json_is_graceful(client, monkeypatch):
+    def boom(term):
+        raise ValueError("bad json")
+    monkeypatch.setattr(appmod, "_itunes_search_sync", boom)
+    monkeypatch.setattr(appmod, "_youtube_thumbnail_sync", lambda term: None)
+    r = client.get("/api/cover", params={"title": "Song", "artist": "Artist"})
+    assert r.status_code == 200
+    assert r.json()["cover_url"] is None
+
+
+def test_cover_itunes_network_error_is_graceful(client, monkeypatch):
+    def boom(term):
+        raise OSError("network down")
+    monkeypatch.setattr(appmod, "_itunes_search_sync", boom)
+    monkeypatch.setattr(appmod, "_youtube_thumbnail_sync", lambda term: None)
+    r = client.get("/api/cover", params={"title": "Song", "artist": "Artist"})
+    assert r.status_code == 200
+    assert r.json()["cover_url"] is None
+
+
+def test_cover_cache_hit_avoids_second_outbound_call(client, monkeypatch):
+    calls = {"n": 0}
+
+    def fake_itunes(term):
+        calls["n"] += 1
+        return [_itunes_result()]
+
+    monkeypatch.setattr(appmod, "_itunes_search_sync", fake_itunes)
+    r1 = client.get("/api/cover", params={"title": "Song", "artist": "Artist"})
+    r2 = client.get("/api/cover", params={"title": "Song", "artist": "Artist"})
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert r1.json() == r2.json()
+    assert calls["n"] == 1
+
+
+def test_cover_rate_limit_returns_429(client, monkeypatch):
+    monkeypatch.setattr(appmod, "RATE_LIMIT_COVER_PER_MIN", 2)
+    monkeypatch.setattr(appmod, "_itunes_search_sync", lambda term: [])
+    monkeypatch.setattr(appmod, "_youtube_thumbnail_sync", lambda term: None)
+    assert client.get("/api/cover", params={"title": "a", "artist": "b"}).status_code == 200
+    assert client.get("/api/cover", params={"title": "c", "artist": "d"}).status_code == 200
+    assert client.get("/api/cover", params={"title": "e", "artist": "f"}).status_code == 429
