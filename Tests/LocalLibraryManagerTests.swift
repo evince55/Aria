@@ -797,7 +797,14 @@ final class LocalLibraryManagerTests: XCTestCase {
         let m = LocalLibraryManager(
             store: InMemoryKeyValueStore(seed: seed),
             libraryDirectory: libraryDir,
-            loadArtworkData: loader
+            loadArtworkData: loader,
+            // Inject a non-network cover fetcher so these embedded-artwork heal
+            // tests are hermetic. Without it the manager defaults to the live
+            // BackendCoverFetcher, and the remote-cover fallback would hit the
+            // real backend whenever the build points at a reachable homelab IP
+            // (any real-IP device-test worktree) — writing a cover and failing
+            // the "artwork stays absent" assertions non-deterministically.
+            coverFetcher: FailingCoverFetcher()
         )
         return (m, seeded)
     }
