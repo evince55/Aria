@@ -14,9 +14,11 @@ final class AVPlayerPath {
     private var playerItem: AVPlayerItem?
     private var timeObserver: Any?
     private var statusObserver: NSKeyValueObservation?
-    private var rateObserver: NSKeyValueObservation?
-    private var bufferEmptyObserver: NSKeyValueObservation?
-    private var likelyToKeepUpObserver: NSKeyValueObservation?
+    /// Single source of truth for play / pause / rebuffer. `timeControlStatus`
+    /// distinguishes a user pause (`.paused`) from an involuntary stall
+    /// (`.waitingToPlayAtSpecifiedRate`), which inferring from `rate == 0` could
+    /// not — a stall used to masquerade as a pause and starve the watchdog.
+    private var timeControlObserver: NSKeyValueObservation?
     /// Fires if the buffer stays empty past the grace period, asking
     /// `PlayerManager` to re-resolve + resume. Re-armed each time the buffer
     /// empties, cancelled when playback recovers or the item is torn down.
@@ -47,9 +49,7 @@ final class AVPlayerPath {
 
     deinit {
         statusObserver?.invalidate()
-        rateObserver?.invalidate()
-        bufferEmptyObserver?.invalidate()
-        likelyToKeepUpObserver?.invalidate()
+        timeControlObserver?.invalidate()
         stallWatchdog?.cancel()
     }
 
@@ -71,9 +71,7 @@ final class AVPlayerPath {
         // create AVPlayer items. Removed.
         if let obs = timeObserver { avPlayer?.removeTimeObserver(obs) }
         statusObserver?.invalidate()
-        rateObserver?.invalidate()
-        bufferEmptyObserver?.invalidate()
-        likelyToKeepUpObserver?.invalidate()
+        timeControlObserver?.invalidate()
         cancelStallWatchdog()
         lastNowPlayingSecond = -1
         avPlayer?.pause()
@@ -93,12 +91,38 @@ final class AVPlayerPath {
         // across tracks without touching every play() call site.
         avPlayer?.defaultRate = playbackRate
 
-        rateObserver = avPlayer?.observe(\.rate, options: [.new]) { [weak self] avPlayer, _ in
-            log.notice("rate changed -> \(avPlayer.rate, privacy: .public)")
+        timeControlObserver = avPlayer?.observe(\.timeControlStatus, options: [.new]) { [weak self] avPlayer, _ in
+            let status = avPlayer.timeControlStatus
             DispatchQueue.main.async {
                 guard let self, let player = self.player else { return }
-                player.isPlaying = avPlayer.rate > 0
-                player.playbackState = avPlayer.rate > 0 ? .playing : .paused
+                switch status {
+                case .playing:
+                    player.isPlaying = true
+                    player.playbackState = .playing
+                    if player.isRebuffering { player.isRebuffering = false }
+                    self.cancelStallWatchdog()
+                    player.notePlaybackRecovered()
+                case .paused:
+                    player.isPlaying = false
+                    // A genuine pause. Don't clobber a load/end transition the
+                    // status/end observers own.
+                    if player.playbackState != .loading, player.playbackState != .ended {
+                        player.playbackState = .paused
+                    }
+                    if player.isRebuffering { player.isRebuffering = false }
+                    self.cancelStallWatchdog()
+                case .waitingToPlayAtSpecifiedRate:
+                    // Wants to play but is buffering/stalled — NOT a user pause.
+                    // Only treat as a rebuffer once playback has actually begun;
+                    // during the initial cold load playbackState is .loading and
+                    // PlayerManager already shows a spinner.
+                    if player.playbackState == .playing {
+                        player.isRebuffering = true
+                        self.armStallWatchdog()
+                    }
+                @unknown default:
+                    break
+                }
                 player.nowPlaying.updateNowPlaying()
             }
         }
@@ -139,27 +163,10 @@ final class AVPlayerPath {
             }
         }
 
-        // Rebuffer detection: buffer empties mid-playback → show "Buffering…"
-        // and arm the stall watchdog; able-to-keep-up → clear it and let
-        // PlayerManager re-arm retries.
-        bufferEmptyObserver = playerItem?.observe(\.isPlaybackBufferEmpty, options: [.new]) { [weak self] item, _ in
-            DispatchQueue.main.async {
-                guard let self, let player = self.player else { return }
-                guard item.isPlaybackBufferEmpty, player.playbackState == .playing else { return }
-                player.isRebuffering = true
-                self.armStallWatchdog()
-            }
-        }
-
-        likelyToKeepUpObserver = playerItem?.observe(\.isPlaybackLikelyToKeepUp, options: [.new]) { [weak self] item, _ in
-            DispatchQueue.main.async {
-                guard let self, let player = self.player else { return }
-                if item.isPlaybackLikelyToKeepUp {
-                    self.cancelStallWatchdog()
-                    player.notePlaybackRecovered()
-                }
-            }
-        }
+        // (Rebuffer detection + recovery are driven by the timeControlStatus
+        // observer above — .waitingToPlayAtSpecifiedRate arms the watchdog and
+        // shows "Buffering…", .playing clears it — so the separate
+        // isPlaybackBufferEmpty / isPlaybackLikelyToKeepUp observers are gone.)
 
         // 4 Hz position updates → smooth scrubber, but only the clock's
         // observers (the player view) re-render. Now Playing is throttled to
@@ -292,15 +299,12 @@ final class AVPlayerPath {
         removeEndObserver()
         if let obs = timeObserver { avPlayer?.removeTimeObserver(obs) }
         statusObserver?.invalidate()
-        rateObserver?.invalidate()
-        bufferEmptyObserver?.invalidate()
-        likelyToKeepUpObserver?.invalidate()
+        timeControlObserver?.invalidate()
         cancelStallWatchdog()
         avPlayer = nil
         playerItem = nil
         timeObserver = nil
-        bufferEmptyObserver = nil
-        likelyToKeepUpObserver = nil
+        timeControlObserver = nil
         lastNowPlayingSecond = -1
         eqTap = nil
         player?.isRebuffering = false
