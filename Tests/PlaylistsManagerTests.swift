@@ -6,7 +6,10 @@ final class PlaylistsManagerTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
-        manager = PlaylistsManager()
+        // Isolated in-memory store per test. (Previously used the on-disk
+        // default; harmless only because deinit dropped saves — now that deinit
+        // persists correctly, a shared file would leak state across tests.)
+        manager = PlaylistsManager(store: InMemoryKeyValueStore())
     }
 
     override func tearDown() {

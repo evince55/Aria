@@ -249,7 +249,8 @@ final class PlayerManager: NSObject, ObservableObject {
     }
 
     deinit {
-        playbackSaveDebouncer?.flush()
+        // flush() is a no-op in deinit (its [weak self] is already nil); save direct.
+        if playbackSaveDebouncer?.isPending == true { performSavePlayback() }
         NotificationCenter.default.removeObserver(self)
         let c = MPRemoteCommandCenter.shared()
         c.playCommand.removeTarget(nil)

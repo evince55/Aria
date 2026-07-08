@@ -31,7 +31,8 @@ final class PlaylistsManager: ObservableObject {
         recomputeSorted()
     }
 
-    deinit { saveDebouncer?.flush() }
+    // flush() is a no-op in deinit (its [weak self] is already nil); save direct.
+    deinit { if saveDebouncer?.isPending == true { performSave() } }
 
     func create(name: String) -> Playlist {
         let playlist = Playlist(name: name, tracks: [])
