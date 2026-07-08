@@ -115,15 +115,31 @@ def test_xff_ignored_without_trusted_proxy(client, monkeypatch):
     assert client.get("/api/search", params={"q": "a"}, headers={"X-Forwarded-For": "9.9.9.9"}).status_code == 429
 
 
-def test_client_ip_picks_hop_left_of_trusted_proxies(monkeypatch):
+def test_client_ip_uses_nth_hop_from_right(monkeypatch):
+    # With one trusted proxy, only the rightmost entry (which the proxy appended)
+    # is trustworthy; a client-prepended forgery on the left must be ignored.
     monkeypatch.setattr(appmod, "TRUSTED_PROXY_COUNT", 1)
 
     class _Req:
-        headers = {"x-forwarded-for": "203.0.113.7, 10.0.0.1"}
+        headers = {"x-forwarded-for": "9.9.9.9, 203.0.113.7"}  # 9.9.9.9 forged
         client = None
 
-    # Rightmost hop (10.0.0.1) is our proxy; the real client is just left of it.
     assert appmod._client_ip(_Req()) == "203.0.113.7"
+
+
+def test_client_ip_ignores_spoof_beyond_trusted_hops(monkeypatch):
+    # Fewer forwarded hops than trusted proxies ⇒ header can't be trusted ⇒
+    # fall through to the socket peer instead of returning a forged entry.
+    monkeypatch.setattr(appmod, "TRUSTED_PROXY_COUNT", 2)
+
+    class _Client:
+        host = "10.0.0.5"
+
+    class _Req:
+        headers = {"x-forwarded-for": "1.2.3.4"}
+        client = _Client()
+
+    assert appmod._client_ip(_Req()) == "10.0.0.5"
 
 
 def test_prune_request_log_bounds_memory(monkeypatch):
@@ -226,14 +242,65 @@ def test_eviction_removes_oldest_first(cache_dir, monkeypatch):
     assert new.exists()
 
 
-def test_eviction_respects_grace_and_current(cache_dir, monkeypatch):
-    monkeypatch.setattr(appmod, "MAX_CACHE_GB", 1.0 / (1024 * 1024))
+def test_eviction_respects_grace_when_cap_still_reachable(cache_dir, monkeypatch):
+    # A within-grace file is protected as long as evicting older files can bring
+    # the cache under cap without touching it.
+    monkeypatch.setattr(appmod, "MAX_CACHE_GB", 1.0 / 1024)  # 1 MB limit
     monkeypatch.setattr(appmod, "CACHE_EVICT_GRACE_SECONDS", 300)
-    f = _make_file(cache_dir, "ccccccccccc.bestaudio.m4a", 2 * 1024 * 1024)
-    appmod._stream_access_times["ccccccccccc"] = time.time()  # just accessed -> within grace
-    appmod._total_cache_bytes = f.stat().st_size
+    now = time.time()
+    fresh = _make_file(cache_dir, "ccccccccccc.bestaudio.m4a", 700 * 1024)
+    old = _make_file(cache_dir, "ddddddddddd.bestaudio.m4a", 700 * 1024)
+    appmod._stream_access_times["ccccccccccc"] = now          # within grace
+    appmod._stream_access_times["ddddddddddd"] = now - 10000  # old, evictable
+    appmod._total_cache_bytes = fresh.stat().st_size + old.stat().st_size
     asyncio.run(appmod._evict_if_needed())
-    assert f.exists()  # protected by grace window
+    assert fresh.exists()       # protected — evicting the old file met the cap
+    assert not old.exists()
+
+
+def test_eviction_overrides_grace_when_cap_unreachable(cache_dir, monkeypatch):
+    # Every file is within grace but we're over cap: the hard cap must win
+    # (override grace) rather than let the cache grow unbounded. The current
+    # track stays protected even under override.
+    monkeypatch.setattr(appmod, "MAX_CACHE_GB", 1.0 / 1024)  # 1 MB
+    monkeypatch.setattr(appmod, "CACHE_EVICT_GRACE_SECONDS", 300)
+    now = time.time()
+    a = _make_file(cache_dir, "eeeeeeeeeee.bestaudio.m4a", 700 * 1024)
+    b = _make_file(cache_dir, "fffffffffff.bestaudio.m4a", 700 * 1024)
+    appmod._stream_access_times["eeeeeeeeeee"] = now - 5  # within grace, older
+    appmod._stream_access_times["fffffffffff"] = now - 1  # within grace, newer
+    appmod._total_cache_bytes = a.stat().st_size + b.stat().st_size
+    asyncio.run(appmod._evict_if_needed(current_video_id="fffffffffff"))
+    assert not a.exists()  # oldest force-evicted despite grace
+    assert b.exists()      # current track protected
+
+
+def test_eviction_uses_mtime_when_lru_entry_missing(cache_dir, monkeypatch):
+    # Post-corrupt-load state: file on disk with no access-times entry must be
+    # aged by its mtime (recent), not epoch 0 — otherwise it sorts oldest and is
+    # wrongly evicted before genuinely-old tracked files.
+    monkeypatch.setattr(appmod, "MAX_CACHE_GB", 1.0 / 1024)  # 1 MB
+    monkeypatch.setattr(appmod, "CACHE_EVICT_GRACE_SECONDS", 300)
+    now = time.time()
+    untracked = _make_file(cache_dir, "ggggggggggg.bestaudio.m4a", 700 * 1024)
+    old = _make_file(cache_dir, "hhhhhhhhhhh.bestaudio.m4a", 700 * 1024)
+    appmod._stream_access_times["hhhhhhhhhhh"] = now - 10000  # tracked, ancient
+    # no entry for "ggggggggggg" — its fresh mtime should protect it
+    appmod._total_cache_bytes = untracked.stat().st_size + old.stat().st_size
+    asyncio.run(appmod._evict_if_needed())
+    assert untracked.exists()
+    assert not old.exists()
+
+
+def test_sweep_partials_removes_only_partial_artifacts(cache_dir):
+    vid = "dQw4w9WgXcQ"
+    part = _make_file(cache_dir, f"{vid}.bestaudio.m4a.part", 100)
+    good = _make_file(cache_dir, f"{vid}.bestaudio.m4a", 100)
+    other = _make_file(cache_dir, "otherVideo1.bestaudio.m4a.part", 100)
+    appmod._sweep_partials(vid)
+    assert not part.exists()   # this video's partial swept
+    assert good.exists()       # completed file untouched
+    assert other.exists()      # a different video's partial untouched
 
 
 # ---------------------------------------------------------------------------

@@ -237,7 +237,12 @@ async def lifespan(_app: FastAPI):
         for f in CACHE_DIR.glob("*.*"):
             if f.is_file() and not f.name.startswith("."):
                 try:
-                    _total_cache_bytes += f.stat().st_size
+                    st = f.stat()
+                    _total_cache_bytes += st.st_size
+                    # Seed any file missing from the (possibly corrupt/empty)
+                    # LRU table with its mtime, so eviction has a real age.
+                    vid = f.name.split(".", 1)[0]
+                    _stream_access_times.setdefault(vid, st.st_mtime)
                 except OSError:
                     pass
     file_count = sum(1 for f in CACHE_DIR.glob("*.*") if not f.name.startswith("."))
@@ -292,19 +297,22 @@ def _client_ip(request: Request) -> str:
     """Best-effort client IP for logging and rate limiting.
 
     X-Forwarded-For is attacker-controllable: any client can prepend fake hops
-    to forge a different rate-limit identity (or hide behind a victim's). Only
-    the rightmost ``TRUSTED_PROXY_COUNT`` entries — appended by reverse proxies
-    we actually run — are trustworthy; the real client sits just to their left.
-    With no trusted proxy configured (the default) we ignore XFF entirely and
-    use the direct socket peer, so a spoofed header can't move the limit.
+    to forge a different rate-limit identity (or hide behind a victim's). Each
+    proxy appends the peer it saw on the RIGHT, so with ``TRUSTED_PROXY_COUNT``
+    proxies in front the real client is the ``N``-th entry from the right
+    (``parts[len - N]``) — everything to its left is client-supplied and
+    untrusted. If there are fewer hops than trusted proxies the header is
+    spoofed/misconfigured, so we ignore it. With no trusted proxy (the default)
+    we ignore XFF entirely and use the direct socket peer.
     """
     if TRUSTED_PROXY_COUNT > 0:
         fwd = request.headers.get("x-forwarded-for")
         if fwd:
             parts = [p.strip() for p in fwd.split(",") if p.strip()]
-            if parts:
-                idx = max(0, len(parts) - TRUSTED_PROXY_COUNT - 1)
+            idx = len(parts) - TRUSTED_PROXY_COUNT
+            if idx >= 0:
                 return parts[idx]
+            # Fewer forwarded hops than trusted proxies → don't trust any entry.
     if request.client and request.client.host:
         return request.client.host
     return "unknown"
@@ -839,6 +847,20 @@ def _cleanup_partial_files() -> int:
     return removed
 
 
+def _sweep_partials(video_id: str) -> None:
+    """Remove leftover partial-download artifacts for one video (e.g. after a
+    failed/aborted or over-size download). Without this, `.part` files pile up:
+    they're excluded from `_total_cache_bytes` accounting and skipped by
+    eviction, and were only swept on restart — so between restarts they fill the
+    disk toward the headroom and wedge every download on a permanent 507."""
+    for f in CACHE_DIR.glob(f"{video_id}*"):
+        if f.is_file() and _is_partial(f):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
 def _check_disk_space(needed_bytes: int = 0) -> None:
     """Raise 507 if writing `needed_bytes` would push free space below the
     configured headroom. Cheap precheck that prevents a disk-fill outage."""
@@ -874,26 +896,53 @@ async def _evict_if_needed(current_video_id: str = ""):
             if not f.is_file() or _is_partial(f):
                 continue
             vid = f.name.split(".", 1)[0]
-            last_access = _stream_access_times.get(vid, 0)
+            last_access = _stream_access_times.get(vid)
+            if last_access is None:
+                # No LRU entry (e.g. after a corrupt access-times file reset the
+                # table): fall back to the file's mtime instead of 0, so grace
+                # still protects it and the sort order stays meaningful.
+                try:
+                    last_access = f.stat().st_mtime
+                except OSError:
+                    last_access = 0
             files_with_age.append((last_access, f, vid))
 
         files_with_age.sort(key=lambda x: x[0])
+        evicted_names: set[str] = set()
 
-        for last_access, f, vid in files_with_age:
-            if _total_cache_bytes <= limit_bytes:
-                break
-            if vid == current_video_id:
-                continue
-            if now - last_access < grace:
-                continue
-            try:
-                file_size = f.stat().st_size
-                f.unlink()
-                _stream_access_times.pop(vid, None)
-                _total_cache_bytes -= file_size
-                logger.info("Evicted %s (idle %.0fs)", f.name, now - last_access)
-            except OSError:
-                pass
+        def evict_pass(ignore_grace: bool) -> None:
+            global _total_cache_bytes
+            for last_access, f, vid in files_with_age:
+                if _total_cache_bytes <= limit_bytes:
+                    break
+                if vid == current_video_id or f.name in evicted_names:
+                    continue
+                if not ignore_grace and now - last_access < grace:
+                    continue
+                try:
+                    file_size = f.stat().st_size
+                    f.unlink()
+                    evicted_names.add(f.name)
+                    _stream_access_times.pop(vid, None)
+                    _total_cache_bytes -= file_size
+                    logger.info(
+                        "Evicted %s (idle %.0fs%s)", f.name, now - last_access,
+                        ", grace overridden" if ignore_grace else "",
+                    )
+                except OSError:
+                    pass
+
+        evict_pass(ignore_grace=False)
+        # Hard cap: if every candidate was inside the grace window, the pass
+        # above frees nothing and the cache grows without bound (previously only
+        # stopped by a disk-full 507). Force-evict oldest-first, grace be damned.
+        if _total_cache_bytes > limit_bytes:
+            logger.warning(
+                "Grace-window eviction freed nothing while over cap "
+                "(%.1f MB > %.1f MB); overriding grace.",
+                _total_cache_bytes / (1024 * 1024), limit_bytes / (1024 * 1024),
+            )
+            evict_pass(ignore_grace=True)
         _save_access_times()
 
 
@@ -948,6 +997,7 @@ async def play(
     except Exception as e:
         _metrics["failures_by_reason"]["download_error"] += 1
         logger.error("Download failed for %s: %s", video_id, e)
+        _sweep_partials(video_id)
         raise HTTPException(status_code=502, detail=f"Download failed: {str(e)}")
     finally:
         event.set()
