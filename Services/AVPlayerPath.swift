@@ -25,7 +25,7 @@ final class AVPlayerPath {
     /// Last whole-second pushed to Now Playing, so the 4 Hz time observer only
     /// updates the lock screen ~1×/sec instead of every tick.
     private var lastNowPlayingSecond = -1
-    private weak var endObserverItem: AVPlayerItem?
+    private var endObserverToken: NSObjectProtocol?
 
     /// Stored seek target consumed on next `play`. PlayerManager writes to
     /// this before calling `play(url:)` so a switch-back from engine path
@@ -106,6 +106,10 @@ final class AVPlayerPath {
         statusObserver = playerItem?.observe(\.status, options: [.new]) { [weak self] item, _ in
             DispatchQueue.main.async {
                 guard let self, let player = self.player else { return }
+                // Ignore a stale item's late status callback: play(url:) may have
+                // swapped in a new item between this KVO firing and the main-queue
+                // hop, and we must not apply item-A's failure/end-time to item B.
+                guard self.playerItem === item else { return }
                 if item.status == .failed {
                     log.error("AVPlayerItem error: \(item.error?.localizedDescription ?? "?", privacy: .public)")
                     // Let PlayerManager decide whether to re-resolve+retry (for a
@@ -127,7 +131,7 @@ final class AVPlayerPath {
                         }
                         player.duration = CMTimeGetSeconds(resolved)
                         if CMTimeCompare(resolved, itemDuration) != 0 {
-                            self.playerItem?.forwardPlaybackEndTime = resolved
+                            item.forwardPlaybackEndTime = resolved
                         }
                         player.nowPlaying.updateNowPlaying()
                     }
@@ -260,20 +264,24 @@ final class AVPlayerPath {
 
     private func addEndObserver(for item: AVPlayerItem?) {
         guard let item, let player else { return }
-        endObserverItem = item
-        NotificationCenter.default.addObserver(
-            player, selector: #selector(PlayerManager.playerItemDidFinish),
-            name: .AVPlayerItemDidPlayToEndTime, object: item
-        )
+        removeEndObserver()
+        // Block-based with queue: .main so the handler — which mutates
+        // PlayerManager's @Published queue/track/state on every track end — runs
+        // on the main actor. The selector overload used here had no queue, so it
+        // fired on AVFoundation's posting thread (a SwiftUI-from-background
+        // violation and a data race against user queue edits).
+        endObserverToken = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+        ) { [weak player] _ in
+            player?.playerItemDidFinish()
+        }
     }
 
     private func removeEndObserver() {
-        if let item = endObserverItem, let player {
-            NotificationCenter.default.removeObserver(
-                player, name: .AVPlayerItemDidPlayToEndTime, object: item
-            )
+        if let token = endObserverToken {
+            NotificationCenter.default.removeObserver(token)
+            endObserverToken = nil
         }
-        endObserverItem = nil
     }
 
     // MARK: - Teardown

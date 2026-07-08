@@ -269,25 +269,30 @@ final class PlayerManager: NSObject, ObservableObject {
         guard let info = note.userInfo,
               let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
               let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
-        switch type {
-        case .began:
-            // Remember whether we were actually playing so an interruption that
-            // arrives while already paused doesn't auto-start audio on resume.
-            wasPlayingBeforeInterruption = isPlaying
-            pause()
-        case .ended:
-            guard wasPlayingBeforeInterruption else { return }
-            wasPlayingBeforeInterruption = false
-            if let optRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt {
-                let opts = AVAudioSession.InterruptionOptions(rawValue: optRaw)
-                if opts.contains(.shouldResume) {
-                    // togglePlayPause() re-activates the audio session (which the
-                    // interruption deactivated) before resuming.
-                    togglePlayPause()
+        // Delivered on an audio-session thread — hop to main before touching
+        // @Published playback state (previously mutated it off-main).
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            switch type {
+            case .began:
+                // Remember whether we were actually playing so an interruption
+                // that arrives while already paused doesn't auto-resume audio.
+                self.wasPlayingBeforeInterruption = self.isPlaying
+                self.pause()
+            case .ended:
+                guard self.wasPlayingBeforeInterruption else { return }
+                self.wasPlayingBeforeInterruption = false
+                if let optRaw = info[AVAudioSessionInterruptionOptionKey] as? UInt {
+                    let opts = AVAudioSession.InterruptionOptions(rawValue: optRaw)
+                    if opts.contains(.shouldResume) {
+                        // togglePlayPause() re-activates the audio session (which
+                        // the interruption deactivated) before resuming.
+                        self.togglePlayPause()
+                    }
                 }
+            @unknown default:
+                break
             }
-        @unknown default:
-            break
         }
     }
 
@@ -295,7 +300,8 @@ final class PlayerManager: NSObject, ObservableObject {
         guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
               let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
               reason == .oldDeviceUnavailable else { return }
-        pause()
+        // Delivered off-main; hop before pausing (which mutates @Published state).
+        DispatchQueue.main.async { [weak self] in self?.pause() }
     }
 
     // MARK: - Playback
