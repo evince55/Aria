@@ -703,6 +703,30 @@ final class PlayerManager: NSObject, ObservableObject {
         if isShuffled { unshuffledQueue?.append(track) }
     }
 
+    /// Queue `track` to play right after the current one. A copy already in
+    /// the queue moves to the front instead of duplicating (unlike
+    /// `addToQueue`, where explicit repeat appends are wanted).
+    func playNext(_ track: Track) {
+        queue.removeAll { $0.id == track.id }
+        queue.insert(track, at: 0)
+        if isShuffled, unshuffledQueue?.contains(where: { $0.id == track.id }) != true {
+            unshuffledQueue?.append(track)
+        }
+    }
+
+    /// Jump playback to the queue row at `index` (tap in `QueueView`). The
+    /// skipped rows are dropped — they were never played, so they don't enter
+    /// history — and the tapped track starts via the normal advance path so
+    /// radio refill and prefetch behave exactly like a natural track change.
+    func playFromQueue(at index: Int) {
+        guard queue.indices.contains(index) else { return }
+        for skipped in queue.prefix(index) {
+            unshuffledQueue?.removeAll { $0.id == skipped.id }
+        }
+        queue.removeFirst(index)
+        playNextInQueue()
+    }
+
     func removeFromQueue(at index: Int) {
         guard queue.indices.contains(index) else { return }
         let removed = queue.remove(at: index)

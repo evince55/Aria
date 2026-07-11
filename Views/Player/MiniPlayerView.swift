@@ -91,7 +91,7 @@ struct MiniPlayerView: View {
 
     @ViewBuilder
     private var trailingButton: some View {
-        Group {
+        HStack(spacing: 0) {
             Button {
                 playerManager.togglePlayPause()
             } label: {
@@ -103,6 +103,20 @@ struct MiniPlayerView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(playerManager.isPlaying ? "Pause" : "Play")
+
+            Button {
+                Haptics.light()
+                playerManager.nextTrack()
+            } label: {
+                Image(systemName: "forward.fill")
+                    .font(.system(size: 16))
+                    .foregroundColor(playerManager.hasNext ? .primary : Color.secondary.opacity(0.5))
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!playerManager.hasNext)
+            .accessibilityLabel("Next track")
         }
     }
 }
