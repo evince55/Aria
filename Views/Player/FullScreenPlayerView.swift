@@ -250,7 +250,7 @@ struct FullScreenPlayerView: View {
     // MARK: - Secondary Controls
 
     private func secondaryControls(track: Track) -> some View {
-        HStack(spacing: 40) {
+        HStack(spacing: 28) {
             Button {
                 favoritesManager.toggle(track)
                 if favoritesManager.isFavorite(track) {
@@ -261,6 +261,8 @@ struct FullScreenPlayerView: View {
                     .font(.title3)
                     .foregroundColor(favoritesManager.isFavorite(track) ? .red : themeManager.textPrimary)
             }
+
+            DownloadButton(track: track)
 
             Button { nav.presentedSheet = .addToPlaylist } label: {
                 Image(systemName: "text.badge.plus")

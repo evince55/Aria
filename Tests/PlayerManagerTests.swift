@@ -461,6 +461,33 @@ final class PlayerManagerTests: XCTestCase {
         )
     }
 
+    func test_playStreamedTrack_prefersDownloadedCopy_skipsBackend() async {
+        // A streamed track that's been downloaded must play from its local copy,
+        // never hitting the backend to resolve.
+        let id = "dQw4w9WgXcQ"
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dltest_\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fileName = "\(id).m4a"
+        try? Data(repeating: 0, count: 100).write(to: dir.appendingPathComponent(fileName))
+        let rec = DownloadRecord(videoID: id, fileName: fileName, sizeBytes: 100,
+                                 downloadedAt: Date(), title: "T", artist: "A", thumbnailURL: nil)
+        let store = InMemoryKeyValueStore(
+            seed: try! SchemaStore.encode([rec], schemaVersion: DownloadManager.schemaVersion))
+        let downloads = DownloadManager(store: store, downloadsDirectory: dir,
+                                        urlSession: mockSession, backendURL: "http://t", apiKey: nil)
+        player.configureDownloads(downloads)
+
+        let before = mockSession.recordedRequests.count
+        player.play(Track(id: id, title: "T", artist: "A"))
+        try? await Task.sleep(nanoseconds: 100_000_000)
+
+        XCTAssertEqual(mockSession.recordedRequests.count, before,
+                       "a downloaded streamed track must play locally without resolving")
+        XCTAssertEqual(player.currentTrack?.id, id)
+    }
+
     func test_localTrack_asPlayerTrack_setsLocalFileURL() {
         let url = URL(fileURLWithPath: "/tmp/foo.mp3")
         let local = LocalTrack(

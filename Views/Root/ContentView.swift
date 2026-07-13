@@ -9,6 +9,7 @@ struct ContentView: View {
     @EnvironmentObject private var settingsManager: SettingsManager
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var localLibraryManager: LocalLibraryManager
+    @EnvironmentObject private var downloadManager: DownloadManager
 
     @State private var selectedTab: AppTab
     @State private var showFullPlayer = false
@@ -88,6 +89,15 @@ struct ContentView: View {
                 playerManager.playerError = nil
             }
         }
+        .onChange(of: downloadManager.lastError) { msg in
+            guard let msg else { return }
+            withAnimation(.spring(response: 0.3)) { errorBanner = msg }
+            Task {
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+                withAnimation { errorBanner = nil }
+                downloadManager.lastError = nil
+            }
+        }
         .preferredColorScheme(themeManager.isDarkMode ? .dark : .light)
         .onChange(of: settingsManager.defaultStartTab) { newValue in
             switch newValue {
@@ -114,6 +124,7 @@ struct ContentView: View {
         .onAppear {
             // Connect favorites so the lock-screen Like command works.
             playerManager.configureFavorites(favoritesManager)
+            playerManager.configureDownloads(downloadManager)
             if ProcessInfo.processInfo.arguments.contains("--debug-fake-track")
                 || UserDefaults.standard.bool(forKey: "debug_fake_track") {
                 playerManager.loadDebugFakeTrack()
@@ -131,6 +142,7 @@ struct ContentView: View {
         playlistsManager.flushPendingWrites()
         recentlyPlayedManager.flushPendingWrites()
         localLibraryManager.flushPendingWrites()
+        downloadManager.flushPendingWrites()
         playerManager.flushPendingWrites()
     }
 

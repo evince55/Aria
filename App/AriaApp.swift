@@ -15,6 +15,7 @@ struct AriaApp: App {
     @StateObject private var eqController: EQController
     @StateObject private var localLibraryManager: LocalLibraryManager
     @StateObject private var navigationCoordinator = NavigationCoordinator()
+    @StateObject private var downloadManager = DownloadManager()
 
     init() {
         do {
@@ -74,6 +75,7 @@ struct AriaApp: App {
                 .environmentObject(eqController)
                 .environmentObject(localLibraryManager)
                 .environmentObject(navigationCoordinator)
+                .environmentObject(downloadManager)
                 .task { playerManager.warmUpBackend() }
         }
     }

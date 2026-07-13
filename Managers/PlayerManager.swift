@@ -340,6 +340,10 @@ final class PlayerManager: NSObject, ObservableObject {
     private func startPlayback(_ track: Track) {
         if let localURL = track.localFileURL {
             playLocal(track: track, fileURL: localURL)
+        } else if let downloaded = downloads?.localURL(for: track.id) {
+            // Prefer an offline download of a streamed track — plays from disk,
+            // no network, EQ tap still applies.
+            playLocal(track: track, fileURL: downloaded)
         } else {
             playStreamed(track: track)
         }
@@ -597,6 +601,16 @@ final class PlayerManager: NSObject, ObservableObject {
         nowPlaying.updateNowPlaying()
     }
 
+    /// Offline downloads. When set, a streamed track that has been downloaded
+    /// plays from its local copy (offline, instant) instead of resolving.
+    private weak var downloads: DownloadManager?
+
+    /// Connect the `DownloadManager` so playback prefers a downloaded copy.
+    /// Call once at launch (mirrors `configureFavorites`).
+    func configureDownloads(_ manager: DownloadManager) {
+        downloads = manager
+    }
+
     /// Replaces the queue with `tracks` and starts playback at
     /// `tracks[startIndex]`. Used by callers that want to play a
     /// contiguous slice of a library/playlist (e.g. the Library tab
@@ -821,7 +835,8 @@ final class PlayerManager: NSObject, ObservableObject {
     /// `playNextInQueue` starts it with no `/api/resolve` round-trip. Local
     /// files need no resolve and are skipped.
     private func prefetchNext() {
-        guard let next = queue.first, next.localFileURL == nil, !next.id.isEmpty else { return }
+        guard let next = queue.first, next.localFileURL == nil,
+              downloads?.localURL(for: next.id) == nil, !next.id.isEmpty else { return }
         let id = next.id
         Task { [prefetcher] in await prefetcher?.prefetch(id) }
     }

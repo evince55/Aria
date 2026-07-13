@@ -7,11 +7,19 @@ struct LibraryView: View {
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var playlistsManager: PlaylistsManager
     @EnvironmentObject private var nav: NavigationCoordinator
+    @EnvironmentObject private var downloadManager: DownloadManager
 
     @State private var isImporting = false
     @State private var importError: String?
     @State private var importingTrackIDs: Set<UUID> = []
     @State private var addToPlaylistTrack: LocalTrack?
+    @State private var selectedTab: LibraryTab = .offlineTracks
+    @Namespace private var tabIndicator
+
+    enum LibraryTab: String, CaseIterable {
+        case offlineTracks = "Offline Tracks"
+        case youtubeDownloads = "YouTube Downloads"
+    }
 
     @AppStorage("librarySortOrder") private var sortOrderRaw: String = LibrarySortOrder.recentlyAdded.rawValue
     @AppStorage("libraryGroupBy") private var groupByRaw: String = LibraryGroupBy.none.rawValue
@@ -41,12 +49,15 @@ struct LibraryView: View {
             ZStack {
                 tokens.background.ignoresSafeArea()
 
-                if vm.tracks.isEmpty {
-                    emptyState
-                } else if vm.filteredAndSortedTracks.isEmpty {
-                    noSearchResults
-                } else {
-                    trackList
+                VStack(spacing: 0) {
+                    tabPicker
+                        .padding(.horizontal, DS.Spacing.lg)
+                        .padding(.top, DS.Spacing.sm)
+
+                    switch selectedTab {
+                    case .offlineTracks: offlineTracksContent
+                    case .youtubeDownloads: downloadsContent
+                    }
                 }
             }
             .navigationTitle("Library")
@@ -61,29 +72,31 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        playAll()
+                        playActiveTab()
                     } label: {
                         Image(systemName: "play.fill")
                     }
-                    .disabled(vm.tracks.isEmpty)
-                    .accessibilityLabel("Play all tracks")
+                    .disabled(activeTabIsEmpty)
+                    .accessibilityLabel("Play all")
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Picker("Sort by", selection: $vm.sortOrder) {
-                            ForEach(LibrarySortOrder.allCases) { order in
-                                Text(order.displayName).tag(order)
+                if selectedTab == .offlineTracks {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Picker("Sort by", selection: $vm.sortOrder) {
+                                ForEach(LibrarySortOrder.allCases) { order in
+                                    Text(order.displayName).tag(order)
+                                }
                             }
-                        }
-                        Picker("Group by", selection: $vm.groupBy) {
-                            ForEach(LibraryGroupBy.allCases) { group in
-                                Text(group.displayName).tag(group)
+                            Picker("Group by", selection: $vm.groupBy) {
+                                ForEach(LibraryGroupBy.allCases) { group in
+                                    Text(group.displayName).tag(group)
+                                }
                             }
+                        } label: {
+                            Image(systemName: "line.3.horizontal.decrease")
                         }
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease")
+                        .accessibilityLabel("Sort and group options")
                     }
-                    .accessibilityLabel("Sort and group options")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -221,25 +234,156 @@ struct LibraryView: View {
         }
     }
 
-    private var trackList: some View {
-        ScrollView {
-            LazyVStack(spacing: 16) {
-                ForEach(vm.sections) { section in
-                    LibrarySectionView(
-                        section: section,
-                        showHeader: vm.groupBy != .none,
-                        tokens: tokens,
-                        isCurrentTrack: isCurrentTrack,
-                        isPlaying: playerManager.isPlaying,
-                        onPlay: { playOrRepair($0) },
-                        onAddToPlaylist: { addToPlaylistTrack = $0 },
-                        onDelete: { libraryManager.remove($0) }
-                    )
+    // MARK: - Tab picker (matches the Playlists Recently-Added/Played style)
+
+    private var tabPicker: some View {
+        HStack(spacing: 0) {
+            ForEach(LibraryTab.allCases, id: \.self) { tab in
+                Button {
+                    Haptics.selection()
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.78)) {
+                        selectedTab = tab
+                    }
+                } label: {
+                    VStack(spacing: 6) {
+                        Text(tab.rawValue)
+                            .font(DS.Typography.bodyEm)
+                            .foregroundColor(selectedTab == tab ? tokens.textPrimary : tokens.textSecondary)
+                        ZStack {
+                            Capsule().fill(Color.clear).frame(height: 3)
+                            if selectedTab == tab {
+                                Capsule()
+                                    .fill(tokens.accent)
+                                    .frame(height: 3)
+                                    .matchedGeometryEffect(id: "libraryTabIndicator", in: tabIndicator)
+                            }
+                        }
+                    }
                 }
+                .buttonStyle(.plain)
+                .frame(maxWidth: .infinity)
             }
-            .padding(.vertical)
         }
-        .background(tokens.background)
+    }
+
+    // MARK: - Offline Tracks tab (imported local files)
+
+    @ViewBuilder
+    private var offlineTracksContent: some View {
+        if vm.tracks.isEmpty {
+            emptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if vm.filteredAndSortedTracks.isEmpty {
+            noSearchResults.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 16) {
+                    ForEach(vm.sections) { section in
+                        LibrarySectionView(
+                            section: section,
+                            showHeader: vm.groupBy != .none,
+                            tokens: tokens,
+                            isCurrentTrack: isCurrentTrack,
+                            isPlaying: playerManager.isPlaying,
+                            onPlay: { playOrRepair($0) },
+                            onAddToPlaylist: { addToPlaylistTrack = $0 },
+                            onDelete: { libraryManager.remove($0) }
+                        )
+                    }
+                }
+                .padding(.vertical)
+            }
+        }
+    }
+
+    // MARK: - YouTube Downloads tab
+
+    /// Downloaded tracks, filtered by the shared search field (title/artist).
+    private var filteredDownloads: [DownloadRecord] {
+        let q = vm.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return downloadManager.records }
+        return downloadManager.records.filter {
+            $0.title.range(of: q, options: .caseInsensitive) != nil
+                || $0.artist.range(of: q, options: .caseInsensitive) != nil
+        }
+    }
+
+    @ViewBuilder
+    private var downloadsContent: some View {
+        if downloadManager.records.isEmpty {
+            downloadsEmptyState.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if filteredDownloads.isEmpty {
+            noSearchResults.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 4) {
+                    ForEach(filteredDownloads) { rec in
+                        downloadRow(rec)
+                    }
+                }
+                .padding(.vertical)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var downloadsEmptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 48, weight: .light))
+                .foregroundColor(tokens.textSecondary)
+            Text("No downloads yet")
+                .font(.title3)
+                .foregroundColor(tokens.textPrimary)
+            Text("Tap the download button on a track to save it here for offline playback.")
+                .font(.callout)
+                .foregroundColor(tokens.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+        }
+    }
+
+    private func downloadRow(_ rec: DownloadRecord) -> some View {
+        Button {
+            let tracks = filteredDownloads.map(\.asTrack)
+            let idx = filteredDownloads.firstIndex { $0.videoID == rec.videoID } ?? 0
+            playerManager.playSlice(tracks, startIndex: idx)
+        } label: {
+            HStack(spacing: DS.Spacing.sm) {
+                TrackThumbnail(url: rec.thumbnailURL, size: 48, cornerRadius: DS.Radius.sm, tokens: tokens)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(rec.title)
+                        .font(.body)
+                        .lineLimit(1)
+                        .foregroundColor(playerManager.currentTrack?.id == rec.videoID ? tokens.accent : tokens.textPrimary)
+                    HStack(spacing: 6) {
+                        Text(rec.artist).lineLimit(1)
+                        Text("· \(Self.formatBytes(rec.sizeBytes))")
+                    }
+                    .font(.caption)
+                    .foregroundColor(tokens.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "arrow.down.circle.fill")
+                    .foregroundColor(tokens.textSecondary)
+                    .imageScale(.small)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, DS.Spacing.lg)
+            .padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(role: .destructive) {
+                downloadManager.remove(rec.videoID)
+            } label: {
+                Label("Remove Download", systemImage: "trash")
+            }
+        }
+    }
+
+    private static func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 
     @ViewBuilder
@@ -346,6 +490,22 @@ struct LibraryView: View {
             $0.asPlayerTrack(fileURL: libraryManager.fileURL(for: $0))
         }
         playerManager.playSlice(asTracks, startIndex: 0)
+    }
+
+    /// Play-all for whichever tab is showing.
+    private func playActiveTab() {
+        switch selectedTab {
+        case .offlineTracks:
+            playAll()
+        case .youtubeDownloads:
+            let tracks = filteredDownloads.map(\.asTrack)
+            guard !tracks.isEmpty else { return }
+            playerManager.playSlice(tracks, startIndex: 0)
+        }
+    }
+
+    private var activeTabIsEmpty: Bool {
+        selectedTab == .offlineTracks ? vm.tracks.isEmpty : downloadManager.records.isEmpty
     }
 
     private func isCurrentTrack(_ track: LocalTrack) -> Bool {
