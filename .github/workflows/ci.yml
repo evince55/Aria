@@ -31,21 +31,15 @@ jobs:
         run: python -m pytest tests/ -q
 
   ios:
-    # DIAGNOSTIC RUN — not intended to merge as-is.
-    #
-    # AriaTests aborts on macos-15 (Xcode 26.3) with a malloc "pointer being
-    # freed was not allocated" at the *first* DebouncerTests case, freeing the
-    # same address (0x262543f40) in every process — including relaunches that
-    # never run AudioEQTests. The suite passes on Xcode 26.5, which is the
-    # toolchain the project actually targets (CLAUDE.md). This matrix runs both
-    # toolchains and prints the crash backtrace, so we can tell a real invalid
-    # free in our code apart from a toolchain bug.
-    name: iOS (${{ matrix.runner }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [macos-15, macos-26]
+    name: iOS (xcodebuild test)
+    # macos-15 ships Xcode 26.3, below the Xcode 26.5+ this project targets
+    # (CLAUDE.md). On 26.3, the back-deployed isolated-deinit shim that Swift
+    # links into the app — Debouncer is implicitly @MainActor via
+    # SWIFT_DEFAULT_ACTOR_ISOLATION, so its deinit is actor-isolated, and the
+    # iOS 16.6 deploy target forces back-deployment — invalid-frees on dealloc
+    # and aborts the test host ("pointer being freed was not allocated"). The
+    # bug is in that shim, not in our code; a supported toolchain doesn't hit it.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
       - name: Select newest available Xcode
@@ -54,20 +48,57 @@ jobs:
           echo "Using ${latest:-default Xcode}"
           [ -n "$latest" ] && sudo xcode-select -s "$latest" || true
           xcodebuild -version
-      - name: List iPhone simulators
-        run: xcrun simctl list devices available | grep -i iphone || true
+
+      # Runner images rotate which simulators they ship (macos-26 has no
+      # "iPhone 16", which is what a hardcoded destination died on). Resolve a
+      # real device UDID from simctl instead so this survives image updates.
+      - name: Pick an iPhone simulator
+        id: sim
+        run: |
+          udid=$(xcrun simctl list devices available --json | python3 -c '
+          import json, re, sys
+
+          runtimes = json.load(sys.stdin)["devices"]
+
+          def ios_version(runtime):
+              tail = runtime.rsplit(".", 1)[-1]          # com.apple...iOS-26-5 -> iOS-26-5
+              return [int(p) for p in tail.split("-") if p.isdigit()]
+
+          best = None
+          for runtime, devices in runtimes.items():
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  name = device["name"]
+                  if not device.get("isAvailable") or not name.startswith("iPhone"):
+                      continue
+                  # Newest iOS, then the highest plain numbered model ("iPhone 17"
+                  # over "iPhone 17 Pro"/"iPhone Air"), so the pick is stable.
+                  model = re.fullmatch(r"iPhone (\d+)", name)
+                  key = (ios_version(runtime), bool(model), int(model.group(1)) if model else 0, name)
+                  if best is None or key > best[0]:
+                      best = (key, device)
+
+          if best is None:
+              sys.exit("no available iPhone simulator on this runner image")
+          print(best[1]["udid"])
+          ')
+          echo "Selected simulator: $(xcrun simctl list devices | grep "$udid" || echo "$udid")"
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+
       - name: Run AriaTests
         run: |
           set -o pipefail
           xcodebuild test \
             -scheme AriaTests \
             -project Aria.xcodeproj \
-            -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
             CODE_SIGNING_ALLOWED=NO
 
-      # The malloc abort leaves a crash report, but xcodebuild's log carries no
-      # backtrace. Print the triggered thread's frames so whatever calls free()
-      # is named rather than guessed at.
+      # A malloc abort kills the test host with no backtrace in xcodebuild's
+      # log, which made the crash above look like it came from whichever test
+      # happened to be running. Print the crashing thread's frames so the next
+      # one names its own culprit.
       - name: Dump crash backtraces
         if: failure()
         run: |
