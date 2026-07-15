@@ -23,14 +23,14 @@ struct MiniPlayerView: View {
 
                     VStack(alignment: .leading, spacing: 1) {
                         Text(track.title)
-                            .font(.system(size: 13, weight: .semibold))
+                            .scaledFont(size: 13, weight: .semibold, relativeTo: .footnote)
                             .lineLimit(1)
                             .foregroundColor(.primary)
                         subtitle
                     }
                 } else {
                     Text("Not playing")
-                        .font(.system(size: 13))
+                        .scaledFont(size: 13, relativeTo: .footnote)
                         .foregroundColor(.secondary)
                 }
 
@@ -41,6 +41,9 @@ struct MiniPlayerView: View {
             .padding(.leading, 4)
             .padding(.trailing, 8)
             .frame(height: 44)
+            // Fixed-height chrome: let text scale through the standard sizes but
+            // clamp before the accessibility sizes clip the 44pt bar.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .background(.ultraThinMaterial)
             .overlay(alignment: .top) {
                 if playerManager.currentTrack != nil {
@@ -84,7 +87,7 @@ struct MiniPlayerView: View {
     @ViewBuilder
     private var subtitle: some View {
         Text(playerManager.currentTrack?.artist ?? "")
-            .font(.system(size: 11))
+            .scaledFont(size: 11, relativeTo: .caption)
             .lineLimit(1)
             .foregroundColor(.secondary)
     }

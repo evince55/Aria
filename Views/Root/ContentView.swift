@@ -70,7 +70,7 @@ struct ContentView: View {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
                     Text(msg)
-                        .font(.system(size: 13, weight: .medium))
+                        .scaledFont(size: 13, weight: .medium, relativeTo: .footnote)
                         .foregroundColor(.white)
                         .lineLimit(2)
                     Spacer(minLength: 0)
@@ -212,8 +212,11 @@ struct ContentView: View {
                     .font(.system(size: 18, weight: selectedTab == tab ? .semibold : .regular))
                     .frame(height: 22)
                 Text(label)
-                    .font(.system(size: 10, weight: selectedTab == tab ? .semibold : .regular))
+                    .scaledFont(size: 10, weight: selectedTab == tab ? .semibold : .regular, relativeTo: .caption2)
             }
+            // Fixed-height tab bar: scale the label through the standard sizes,
+            // but clamp before the accessibility sizes break the bar layout.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .foregroundColor(selectedTab == tab ? themeManager.theme.accentColor : themeManager.textSecondary)
             .frame(maxWidth: .infinity)
         }

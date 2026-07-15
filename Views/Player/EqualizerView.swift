@@ -101,7 +101,7 @@ struct EqualizerView: View {
                     .padding(.horizontal, 2)
 
                     Text(frequencyLabel(i))
-                        .font(.system(size: 9))
+                        .scaledFont(size: 9, relativeTo: .caption2)
                         .foregroundColor(themeManager.textSecondary)
                         .frame(height: 12)
                 }

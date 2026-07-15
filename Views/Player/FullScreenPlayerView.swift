@@ -42,7 +42,7 @@ struct FullScreenPlayerView: View {
                                     .font(.title3)
                                     .foregroundColor(themeManager.textPrimary)
                                 Text("\(playerManager.queue.count)")
-                                    .font(.system(size: 10, weight: .bold))
+                                    .scaledFont(size: 10, weight: .bold, relativeTo: .caption2)
                                     .foregroundColor(themeManager.theme.accentColor)
                                     .offset(x: 10, y: -2)
                             }
@@ -290,7 +290,7 @@ struct FullScreenPlayerView: View {
                 }
             } label: {
                 Text(speedLabel(playerManager.playbackRate))
-                    .font(.system(size: 15, weight: .semibold))
+                    .scaledFont(size: 15, weight: .semibold, relativeTo: .subheadline)
                     .monospacedDigit()
                     .frame(minWidth: 34)
                     .foregroundColor(playerManager.playbackRate == 1.0
