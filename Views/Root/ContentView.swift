@@ -175,7 +175,7 @@ struct ContentView: View {
         case .library:
             LibraryView(library: localLibraryManager)
         case .search:
-            SearchView(selectedTab: $selectedTab)
+            SearchView()
         case .more:
             MoreView()
         }

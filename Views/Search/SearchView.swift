@@ -5,7 +5,6 @@ struct SearchView: View {
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var settingsManager: SettingsManager
-    @Binding var selectedTab: AppTab
 
     @State private var query = ""
     @State private var results: Loadable<[Track]> = .idle
@@ -21,8 +20,7 @@ struct SearchView: View {
     private let searchService: YouTubeSearchService
     private var tokens: DesignTokens { themeManager.tokens }
 
-    init(selectedTab: Binding<AppTab>) {
-        self._selectedTab = selectedTab
+    init() {
         self.searchService = YouTubeSearchService(backendURL: PlayerManager.backendURL)
     }
 
