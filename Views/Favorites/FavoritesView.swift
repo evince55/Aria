@@ -4,7 +4,10 @@ struct FavoritesView: View {
     @EnvironmentObject private var playerManager: PlayerManager
     @EnvironmentObject private var favoritesManager: FavoritesManager
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
+    @EnvironmentObject private var playlistsManager: PlaylistsManager
     @EnvironmentObject private var themeManager: ThemeManager
+
+    @State private var addToPlaylistTrack: Track?
 
     private var tokens: DesignTokens { themeManager.tokens }
 
@@ -24,6 +27,9 @@ struct FavoritesView: View {
                     listContent
                 }
             }
+        }
+        .sheet(item: $addToPlaylistTrack) { track in
+            addToPlaylistSheet(for: track)
         }
     }
 
@@ -131,45 +137,137 @@ struct FavoritesView: View {
     }
 
     private func trackRow(_ track: Track) -> some View {
-        Button {
-            Haptics.light()
-            let allTracks = favoritesManager.groupedByLetter().flatMap { $0.tracks }
-            let idx = allTracks.firstIndex(where: { $0.id == track.id }) ?? 0
-            playerManager.playSlice(allTracks, startIndex: idx)
-            recentlyPlayedManager.trackPlayed(track)
-        } label: {
-            HStack(spacing: DS.Spacing.sm) {
-                TrackThumbnail(url: track.thumbnailURL, size: 48, cornerRadius: DS.Radius.sm, tokens: tokens)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(track.title)
-                        .font(DS.Typography.bodyEm)
-                        .lineLimit(1)
-                        .foregroundColor(playerManager.currentTrack?.id == track.id ? tokens.accent : tokens.textPrimary)
-                    HStack(spacing: 4) {
-                        if playerManager.currentTrack?.id == track.id {
-                            NowPlayingIndicator(isPlaying: playerManager.isPlaying, accent: tokens.accent)
-                        }
-                        Text(track.artist)
-                            .font(DS.Typography.caption)
+        HStack(spacing: 0) {
+            Button {
+                Haptics.light()
+                let allTracks = favoritesManager.groupedByLetter().flatMap { $0.tracks }
+                let idx = allTracks.firstIndex(where: { $0.id == track.id }) ?? 0
+                playerManager.playSlice(allTracks, startIndex: idx)
+                recentlyPlayedManager.trackPlayed(track)
+            } label: {
+                HStack(spacing: DS.Spacing.sm) {
+                    TrackThumbnail(url: track.thumbnailURL, size: 48, cornerRadius: DS.Radius.sm, tokens: tokens)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(track.title)
+                            .font(DS.Typography.bodyEm)
                             .lineLimit(1)
-                            .foregroundColor(tokens.textSecondary)
+                            .foregroundColor(playerManager.currentTrack?.id == track.id ? tokens.accent : tokens.textPrimary)
+                        HStack(spacing: 4) {
+                            if playerManager.currentTrack?.id == track.id {
+                                NowPlayingIndicator(isPlaying: playerManager.isPlaying, accent: tokens.accent)
+                            }
+                            Text(track.artist)
+                                .font(DS.Typography.caption)
+                                .lineLimit(1)
+                                .foregroundColor(tokens.textSecondary)
+                        }
                     }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(tokens.textSecondary)
-                    .frame(width: 24, height: 24)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            trackMenu(track)
         }
-        .buttonStyle(.plain)
         .addToQueueGesture(playerManager: playerManager, track: track)
         .trackRowAccessibility(
             title: track.title, artist: track.artist,
             isCurrent: playerManager.currentTrack?.id == track.id,
             isPlaying: playerManager.isPlaying
         )
+    }
+
+    /// The row's action menu — the ellipsis used to be decorative; now it
+    /// carries the actions users expect from a favorites row.
+    private func trackMenu(_ track: Track) -> some View {
+        Menu {
+            Button {
+                Haptics.medium()
+                playerManager.addToQueue(track)
+            } label: {
+                Label("Add to Queue", systemImage: "text.badge.plus")
+            }
+            Button {
+                addToPlaylistTrack = track
+            } label: {
+                Label("Add to Playlist", systemImage: "music.note.list")
+            }
+            if let url = track.shareURL {
+                ShareLink(item: url, subject: Text(track.title),
+                          message: Text("\(track.title) — \(track.artist)")) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            } else {
+                ShareLink(item: "\(track.title) — \(track.artist)") {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
+            Divider()
+            Button(role: .destructive) {
+                Haptics.warning()
+                favoritesManager.remove(track)
+            } label: {
+                Label("Remove from Favorites", systemImage: "heart.slash")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(tokens.textSecondary)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("More actions for \(track.title)")
+    }
+
+    /// Same pattern as the full-screen player's sheet, but for an explicit
+    /// track (not the currently playing one).
+    private func addToPlaylistSheet(for track: Track) -> some View {
+        NavigationStack {
+            Group {
+                if playlistsManager.playlists.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "music.note.list")
+                            .font(.system(size: 40))
+                            .foregroundColor(.secondary)
+                        Text("No Playlists")
+                            .font(.title3)
+                            .fontWeight(.semibold)
+                        Text("Create a playlist first")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    List(playlistsManager.playlists) { playlist in
+                        Button {
+                            playlistsManager.addTrack(track, to: playlist)
+                            recentlyPlayedManager.trackAdded(track)
+                            addToPlaylistTrack = nil
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(playlist.name)
+                                        .font(.body)
+                                    Text("\(playlist.tracks.count) tracks")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                Image(systemName: "plus.circle")
+                                    .foregroundColor(themeManager.theme.accentColor)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Add to Playlist")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { addToPlaylistTrack = nil }
+                }
+            }
+        }
     }
 }

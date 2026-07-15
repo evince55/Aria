@@ -105,6 +105,7 @@ struct SearchView: View {
             }
             .padding(.bottom, DS.Spacing.xxl)
         }
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private var searchHistorySection: some View {
@@ -244,9 +245,10 @@ struct SearchView: View {
                         Haptics.light()
                         // Start an endless "similar songs" radio seeded from the
                         // tapped result instead of queuing the raw search list.
+                        // Stay on Search: the results (and the mini player) keep
+                        // the user in the flow of trying the next result.
                         playerManager.playRadio(seed: track)
                         recentlyPlayedManager.trackPlayed(track)
-                        selectedTab = .favorites
                     } label: {
                         HStack(spacing: DS.Spacing.sm) {
                             TrackThumbnail(url: track.thumbnailURL, size: 52, cornerRadius: DS.Radius.sm, tokens: tokens)
@@ -323,6 +325,7 @@ struct SearchView: View {
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.interactively)
     }
 
     private func errorPill(_ message: String) -> some View {
@@ -385,7 +388,6 @@ struct SearchView: View {
             Haptics.light()
             playerManager.playRadio(seed: track)
             recentlyPlayedManager.trackPlayed(track)
-            selectedTab = .favorites
         } label: {
             HStack(spacing: DS.Spacing.sm) {
                 TrackThumbnail(url: track.thumbnailURL, size: 56, cornerRadius: DS.Radius.sm, tokens: tokens)
@@ -417,7 +419,6 @@ struct SearchView: View {
             Haptics.light()
             playerManager.playRadio(seed: track)
             recentlyPlayedManager.trackPlayed(track)
-            selectedTab = .favorites
         } label: {
             VStack(alignment: .leading, spacing: DS.Spacing.sm) {
                 TrackThumbnail(url: track.thumbnailURL, size: nil, cornerRadius: DS.Radius.md, tokens: tokens)

@@ -11,7 +11,6 @@ struct LibraryView: View {
 
     @State private var isImporting = false
     @State private var importError: String?
-    @State private var importingTrackIDs: Set<UUID> = []
     @State private var addToPlaylistTrack: LocalTrack?
     @State private var selectedTab: LibraryTab = .offlineTracks
     @Namespace private var tabIndicator
@@ -406,16 +405,23 @@ struct LibraryView: View {
     // MARK: - Actions
 
     private func importURLs(_ urls: [URL]) async {
+        // Collect every failure — overwriting one alert message per error
+        // meant a multi-file import reported only the last problem.
+        var failures: [String] = []
         for url in urls {
             do {
-                let track = try await libraryManager.importFile(at: url)
-                importingTrackIDs.insert(track.id)
+                _ = try await libraryManager.importFile(at: url)
             } catch let error as ImportError {
-                importError = importErrorMessage(for: error, fileName: url.lastPathComponent)
+                failures.append(importErrorMessage(for: error, fileName: url.lastPathComponent))
             } catch {
-                importError = "Couldn't import \(url.lastPathComponent): \(error.localizedDescription)"
+                failures.append("Couldn't import \(url.lastPathComponent): \(error.localizedDescription)")
             }
         }
+        guard !failures.isEmpty else { return }
+        importError = failures.count == 1
+            ? failures[0]
+            : "\(failures.count) of \(urls.count) files failed to import:\n\n"
+                + failures.joined(separator: "\n\n")
     }
 
     private func importErrorMessage(for error: ImportError, fileName: String) -> String {

@@ -11,6 +11,11 @@ struct PlaylistsView: View {
     @State private var showNewPlaylistAlert = false
     @State private var newPlaylistName = ""
     @State private var selectedPlaylist: Playlist?
+    @State private var renameTarget: Playlist?
+    @State private var showRenameAlert = false
+    @State private var renameText = ""
+    @State private var deleteTarget: Playlist?
+    @State private var showDeleteAlert = false
 
     @Namespace private var tabIndicator
 
@@ -60,6 +65,30 @@ struct PlaylistsView: View {
         }
         .sheet(item: $selectedPlaylist) { playlist in
             PlaylistDetailView(playlist: playlist)
+        }
+        .alert("Rename Playlist", isPresented: $showRenameAlert) {
+            TextField("Playlist name", text: $renameText)
+            Button("Cancel", role: .cancel) { renameTarget = nil }
+            Button("Rename") {
+                let trimmed = renameText.trimmingCharacters(in: .whitespaces)
+                if let target = renameTarget, !trimmed.isEmpty {
+                    Haptics.success()
+                    playlistsManager.rename(target, to: trimmed)
+                }
+                renameTarget = nil
+            }
+        }
+        .alert("Delete Playlist", isPresented: $showDeleteAlert) {
+            Button("Cancel", role: .cancel) { deleteTarget = nil }
+            Button("Delete", role: .destructive) {
+                if let target = deleteTarget {
+                    Haptics.warning()
+                    playlistsManager.delete(target)
+                }
+                deleteTarget = nil
+            }
+        } message: {
+            Text("This permanently deletes “\(deleteTarget?.name ?? "")”. This action cannot be undone.")
         }
     }
 
@@ -394,5 +423,31 @@ struct PlaylistsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button {
+                Haptics.medium()
+                let tracks = playlist.tracks
+                guard !tracks.isEmpty else { return }
+                playerManager.playSlice(tracks, startIndex: 0)
+                recentlyPlayedManager.trackPlayed(tracks[0])
+                playlistsManager.markPlayed(playlist)
+            } label: {
+                Label("Play", systemImage: "play.fill")
+            }
+            Button {
+                renameTarget = playlist
+                renameText = playlist.name
+                showRenameAlert = true
+            } label: {
+                Label("Rename", systemImage: "pencil")
+            }
+            Divider()
+            Button(role: .destructive) {
+                deleteTarget = playlist
+                showDeleteAlert = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
     }
 }

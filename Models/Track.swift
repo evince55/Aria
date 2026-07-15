@@ -73,6 +73,15 @@ struct Track: Identifiable, Codable, Hashable {
 
     var isLocal: Bool { localFileURL != nil }
 
+    /// A link a recipient can actually open. For streamed tracks the `id` IS
+    /// the YouTube video ID, so this is the watch URL. Local files have
+    /// nothing shareable (`id` is `"local:<UUID>"`) — callers fall back to
+    /// sharing "title — artist" text.
+    var shareURL: URL? {
+        guard !isLocal, !id.hasPrefix("local:") else { return nil }
+        return URL(string: "https://www.youtube.com/watch?v=\(id)")
+    }
+
     var firstLetter: String {
         let normalized = title
             .trimmingCharacters(in: .whitespacesAndNewlines)
