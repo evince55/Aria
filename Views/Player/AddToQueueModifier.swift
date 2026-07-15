@@ -5,21 +5,22 @@ struct AddToQueueModifier: ViewModifier {
     let track: Track
 
     @State private var showConfirmation = false
+    @State private var confirmationText = "Added to Queue"
 
     func body(content: Content) -> some View {
         content
             .contextMenu {
                 Button {
                     Haptics.medium()
+                    playerManager.playNext(track)
+                    confirm("Playing Next")
+                } label: {
+                    Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                }
+                Button {
+                    Haptics.medium()
                     playerManager.addToQueue(track)
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.65)) {
-                        showConfirmation = true
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-                        withAnimation(.easeOut(duration: 0.25)) {
-                            showConfirmation = false
-                        }
-                    }
+                    confirm("Added to Queue")
                 } label: {
                     Label("Add to Queue", systemImage: "text.badge.plus")
                 }
@@ -33,12 +34,25 @@ struct AddToQueueModifier: ViewModifier {
             }
     }
 
+    /// Shows the toast with the given text, auto-hiding after a beat.
+    private func confirm(_ text: String) {
+        confirmationText = text
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.65)) {
+            showConfirmation = true
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            withAnimation(.easeOut(duration: 0.25)) {
+                showConfirmation = false
+            }
+        }
+    }
+
     private var confirmationToast: some View {
         HStack(spacing: DS.Spacing.sm) {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(.green)
-            Text("Added to Queue")
+            Text(confirmationText)
                 .font(DS.Typography.captionStrong)
                 .foregroundColor(.primary)
         }

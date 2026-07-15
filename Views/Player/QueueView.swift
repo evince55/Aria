@@ -125,11 +125,9 @@ struct QueueView: View {
             ForEach(Array(playerManager.queue.enumerated()), id: \.element.id) { index, track in
                 Button {
                     Haptics.light()
-                    if index == 0 {
-                        playerManager.playNextInQueue()
-                        if playerManager.queue.isEmpty {
-                            dismiss()
-                        }
+                    playerManager.playFromQueue(at: index)
+                    if playerManager.queue.isEmpty {
+                        dismiss()
                     }
                 } label: {
                     HStack(spacing: DS.Spacing.sm) {
