@@ -36,6 +36,16 @@
 	     ARIA_API_KEY in the backend env to actually enforce auth. -->
 	<key>ARIA_API_KEY</key>
 	<string></string>
+	<!-- Full backend base URL override (e.g. https://aria.example.com). Empty =
+	     ignored; the app then falls back to http://ARIA_HOMELAB_HOST:8000. Set
+	     this for TestFlight/App Store builds where Tailscale isn't available.
+	     Release builds use Aria---Music-Browser-Info-Release.plist instead. -->
+	<key>ARIA_BACKEND_URL</key>
+	<string></string>
+	<!-- App uses only exempt encryption (HTTPS/ATS); pre-answers the App Store
+	     Connect export-compliance question. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

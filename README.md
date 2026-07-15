@@ -73,6 +73,15 @@ CLI build:
 xcodebuildmcp build_sim --scheme "Aria - Music Browser"
 ```
 
+## Deployment
+
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) covers both avenues: personal
+installs (Xcode direct / TestFlight, homelab backend over Tailscale) and App
+Store submission (hardened Release plist, privacy manifest, export compliance,
+and an honest 5.2.3 review-risk assessment). Release builds use
+`Aria---Music-Browser-Info-Release.plist` — no ATS bypass, HTTPS backend
+required.
+
 ## Test
 
 ```sh

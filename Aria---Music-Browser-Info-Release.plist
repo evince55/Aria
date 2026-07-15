@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Release Info.plist — mirrors Aria---Music-Browser-Info.plist minus the
+     dev-only ATS bypasses (NSAllowsArbitraryLoads and the homelab IP/TLSv1.0
+     exception). Release builds therefore require an HTTPS backend: set
+     ARIA_BACKEND_URL below, or configure the server URL in-app. Keep the two
+     plists' shared keys in sync when adding new configuration. -->
+<dict>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<!-- yt-dlp-resolved audio streams; kept scoped in case a CDN edge
+			     serves plain HTTP. -->
+			<key>googlevideo.com</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+	<key>ARIA_HOMELAB_HOST</key>
+	<string>192.0.2.1</string>
+	<key>ARIA_API_KEY</key>
+	<string></string>
+	<key>ARIA_BACKEND_URL</key>
+	<string></string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+</dict>
+</plist>

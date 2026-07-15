@@ -448,7 +448,7 @@
 				DEVELOPMENT_TEAM = UMMQB88PD3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = "Aria---Music-Browser-Info.plist";
+				INFOPLIST_FILE = "Aria---Music-Browser-Info-Release.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Aria;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
