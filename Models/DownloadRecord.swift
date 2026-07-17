@@ -11,13 +11,18 @@ struct DownloadRecord: Codable, Identifiable, Hashable {
     let title: String
     let artist: String
     let thumbnailURL: URL?
+    /// Audio length in seconds, probed from the downloaded file. Optional with a
+    /// `nil` default so records persisted before schema v2 decode without a
+    /// migration and so `download()` can set it after writing the file. Feeds a
+    /// truthful bitrate on the download's quality badge.
+    var durationSeconds: Double? = nil
 
     var id: String { videoID }
 
     /// Reconstruct a playable `Track` for the Library section. It keeps the
     /// YouTube identity, so `PlayerManager` prefers the local copy at play time.
     var asTrack: Track {
-        Track(id: videoID, title: title, artist: artist, thumbnailURL: thumbnailURL)
+        Track(id: videoID, title: title, artist: artist, thumbnailURL: thumbnailURL, duration: durationSeconds)
     }
 }
 

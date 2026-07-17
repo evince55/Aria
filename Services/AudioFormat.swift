@@ -13,6 +13,15 @@ enum AudioFormat: String, Equatable {
         }
     }
 
+    /// Whether the format preserves the original signal bit-for-bit. Drives the
+    /// `AudioQuality` badge's lossless/lossy split.
+    var isLossless: Bool {
+        switch self {
+        case .flac, .alac, .wav, .aiff, .ape: return true
+        case .mp3, .aac, .ogg, .opus, .wma, .unknown: return false
+        }
+    }
+
     var displayName: String {
         switch self {
         case .aac: return "AAC"

@@ -284,6 +284,8 @@ struct LibraryView: View {
                             isCurrentTrack: isCurrentTrack,
                             isPlaying: playerManager.isPlaying,
                             onPlay: { playOrRepair($0) },
+                            onPlayNext: { enqueueLocal($0, playNext: true) },
+                            onAddToQueue: { enqueueLocal($0, playNext: false) },
                             onAddToPlaylist: { addToPlaylistTrack = $0 },
                             onDelete: { libraryManager.remove($0) }
                         )
@@ -357,6 +359,14 @@ struct LibraryView: View {
                     HStack(spacing: 6) {
                         Text(rec.artist).lineLimit(1)
                         Text("· \(Self.formatBytes(rec.sizeBytes))")
+                        QualityBadge(
+                            AudioQuality.forFile(
+                                fileName: rec.fileName,
+                                sizeBytes: rec.sizeBytes,
+                                durationSeconds: rec.durationSeconds
+                            ),
+                            tokens: tokens
+                        )
                     }
                     .font(.caption)
                     .foregroundColor(tokens.textSecondary)
@@ -373,6 +383,19 @@ struct LibraryView: View {
         }
         .buttonStyle(.plain)
         .contextMenu {
+            Button {
+                Haptics.medium()
+                playerManager.playNext(rec.asTrack)
+            } label: {
+                Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
+            Button {
+                Haptics.medium()
+                playerManager.addToQueue(rec.asTrack)
+            } label: {
+                Label("Add to Queue", systemImage: "text.badge.plus")
+            }
+            Divider()
             Button(role: .destructive) {
                 downloadManager.remove(rec.videoID)
             } label: {
@@ -432,6 +455,20 @@ struct LibraryView: View {
             return "\(fileName) hasn't finished downloading from iCloud. Open it in the Files app, wait for the download to finish, then try again."
         case .zeroByteFile:
             return "\(fileName) is empty (0 bytes). Pick a different file."
+        }
+    }
+
+    /// Hold-to-queue for a local file. Skips tracks with no bytes on disk
+    /// (`isMissing`) so a placeholder entry isn't enqueued. Converts to a
+    /// playable `Track` via the injected library manager's file URL.
+    private func enqueueLocal(_ track: LocalTrack, playNext: Bool) {
+        guard !track.isMissing else { return }
+        Haptics.medium()
+        let asTrack = track.asPlayerTrack(fileURL: libraryManager.fileURL(for: track))
+        if playNext {
+            playerManager.playNext(asTrack)
+        } else {
+            playerManager.addToQueue(asTrack)
         }
     }
 

@@ -36,6 +36,14 @@ struct LibraryTrackRow: View {
                             Text("·")
                             Text(formatDuration(duration))
                         }
+                        QualityBadge(
+                            AudioQuality.forFile(
+                                fileName: track.fileName,
+                                sizeBytes: track.fileSizeBytes,
+                                durationSeconds: track.durationSeconds
+                            ),
+                            tokens: tokens
+                        )
                     }
                     .font(.caption2)
                     .foregroundColor(tokens.textSecondary)

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AVFoundation
 
 /// Owns offline downloads: caches a streamed track's audio (by YouTube video id)
 /// into the app sandbox and tracks which tracks are available offline.
@@ -12,7 +13,9 @@ import Combine
 /// determinate-progress download is a future refinement.
 final class DownloadManager: ObservableObject {
     /// Bump when `DownloadRecord`'s on-disk shape needs a migration.
-    static let schemaVersion = 1
+    /// v2 added the optional `durationSeconds` field (no migration needed —
+    /// `SchemaStore.loadItems` ignores the version and the field is optional).
+    static let schemaVersion = 2
 
     /// Downloaded tracks, newest first. Drives the Library "YouTube Downloads" section.
     @Published private(set) var records: [DownloadRecord] = []
@@ -131,11 +134,18 @@ final class DownloadManager: ObservableObject {
             let fileURL = downloadsDir.appendingPathComponent(fileName)
             try audio.write(to: fileURL, options: .atomic)
 
+            // 3b. Probe the file's duration so the Library badge can show a
+            //     truthful bitrate. Best-effort: a failed probe just leaves the
+            //     badge codec-only.
+            let dur = try? await AVURLAsset(url: fileURL).load(.duration)
+            let secs = dur.map { CMTimeGetSeconds($0) }
+            let durationSeconds: Double? = (secs?.isFinite == true && (secs ?? 0) > 0) ? secs : nil
+
             // 4. Record it.
             let rec = DownloadRecord(
                 videoID: id, fileName: fileName, sizeBytes: Int64(audio.count),
                 downloadedAt: Date(), title: track.title, artist: track.artist,
-                thumbnailURL: track.thumbnailURL
+                thumbnailURL: track.thumbnailURL, durationSeconds: durationSeconds
             )
             records.removeAll { $0.videoID == id }
             records.insert(rec, at: 0)

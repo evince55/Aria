@@ -10,6 +10,8 @@ struct LibrarySectionView: View {
     let isCurrentTrack: (LocalTrack) -> Bool
     let isPlaying: Bool
     let onPlay: (LocalTrack) -> Void
+    let onPlayNext: (LocalTrack) -> Void
+    let onAddToQueue: (LocalTrack) -> Void
     let onAddToPlaylist: (LocalTrack) -> Void
     let onDelete: (LocalTrack) -> Void
 
@@ -39,6 +41,18 @@ struct LibrarySectionView: View {
                         onPlay(track)
                     } label: {
                         Label("Play", systemImage: "play.fill")
+                    }
+                    if !track.isMissing {
+                        Button {
+                            onPlayNext(track)
+                        } label: {
+                            Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+                        }
+                        Button {
+                            onAddToQueue(track)
+                        } label: {
+                            Label("Add to Queue", systemImage: "text.badge.plus")
+                        }
                     }
                     Button {
                         onAddToPlaylist(track)
