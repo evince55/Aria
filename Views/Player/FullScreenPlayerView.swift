@@ -38,25 +38,28 @@ struct FullScreenPlayerView: View {
                     Button {
                         nav.presentedSheet = .queue
                     } label: {
-                        Group {
-                            if !playerManager.queue.isEmpty {
-                                ZStack(alignment: .topTrailing) {
-                                    Image(systemName: "list.bullet")
-                                        .font(.title3)
-                                        .foregroundColor(themeManager.textPrimary)
-                                    Text("\(playerManager.queue.count)")
-                                        .scaledFont(size: 10, weight: .bold, relativeTo: .caption2)
-                                        .foregroundColor(themeManager.theme.accentColor)
-                                        .offset(x: 10, y: -2)
+                        Image(systemName: "list.bullet")
+                            .font(.title3)
+                            .foregroundColor(playerManager.queue.isEmpty
+                                             ? themeManager.textSecondary
+                                             : themeManager.textPrimary)
+                            .frame(width: 44, height: 44)
+                            // A real count badge: anchored to the frame's top-
+                            // trailing corner and inset, so multi-digit counts
+                            // grow leftward and stay inside the 44pt tap target
+                            // instead of spilling into the neighbouring control.
+                            .overlay(alignment: .topTrailing) {
+                                if !playerManager.queue.isEmpty {
+                                    Text(playerManager.queue.count > 99 ? "99+" : "\(playerManager.queue.count)")
+                                        .scaledFont(size: 9, weight: .bold, relativeTo: .caption2)
+                                        .foregroundColor(.white)
+                                        .padding(.horizontal, 4)
+                                        .frame(minWidth: 16, minHeight: 16)
+                                        .background(Capsule().fill(themeManager.theme.accentColor))
+                                        .padding([.top, .trailing], 2)
                                 }
-                            } else {
-                                Image(systemName: "list.bullet")
-                                    .font(.title3)
-                                    .foregroundColor(themeManager.textSecondary)
                             }
-                        }
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel(playerManager.queue.isEmpty ? "Show queue" : "Show queue, \(playerManager.queue.count) up next")
                 }
