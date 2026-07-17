@@ -143,9 +143,16 @@ after a normal review pass. TestFlight (A2) remains the zero-drama option.
 - **Auth:** set `ARIA_API_KEY` in the backend env; clients send it as
   `X-API-Key` (plist or in-app setting). Without it, all endpoints —
   including `DELETE /api/cache` — are anonymous.
-- **HTTPS for Release/TestFlight builds:** Tailscale Funnel is the least-moving-
-  parts option (`tailscale funnel 8000` → public `https://<node>.ts.net` URL);
-  a Caddy reverse proxy with Let's Encrypt is the self-managed one.
+- **HTTPS for Release/TestFlight builds:**
+  - **Cloudflare Tunnel (recommended)** — public `https://api.<your-domain>` on
+    your own domain, free cert, keeps the residential IP yt-dlp needs, no open
+    ports. Full runbook: [`docs/CLOUDFLARE-TUNNEL.md`](CLOUDFLARE-TUNNEL.md).
+  - Tailscale Funnel is the least-moving-parts alternative
+    (`tailscale funnel 8000` → `https://<node>.ts.net`); a Caddy reverse proxy
+    with Let's Encrypt is the fully self-managed one.
+  - Behind Cloudflare, the backend reads the real client IP from
+    `CF-Connecting-IP` (trusted only from a loopback peer, i.e. the local
+    tunnel) — so per-IP rate limiting stays correct.
 - yt-dlp keeps itself current via `update-yt-dlp.sh` + the systemd timer;
   `/api/health` reports the running version, node status, and error rate —
   point an uptime monitor at it.

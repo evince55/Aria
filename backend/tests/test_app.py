@@ -142,6 +142,32 @@ def test_client_ip_ignores_spoof_beyond_trusted_hops(monkeypatch):
     assert appmod._client_ip(_Req()) == "10.0.0.5"
 
 
+def test_client_ip_trusts_cf_connecting_ip_from_loopback():
+    # Cloudflare Tunnel: the local cloudflared arrives on loopback and sets
+    # CF-Connecting-IP to the real remote client — that's the rate-limit identity.
+    class _Client:
+        host = "127.0.0.1"
+
+    class _Req:
+        headers = {"cf-connecting-ip": "198.51.100.7"}
+        client = _Client()
+
+    assert appmod._client_ip(_Req()) == "198.51.100.7"
+
+
+def test_client_ip_ignores_cf_connecting_ip_from_direct_peer():
+    # A caller reaching the origin directly (Tailscale/LAN, non-loopback peer)
+    # must NOT be able to forge a rate-limit identity via CF-Connecting-IP.
+    class _Client:
+        host = "100.64.0.9"  # Tailscale-range peer, not loopback
+
+    class _Req:
+        headers = {"cf-connecting-ip": "1.2.3.4"}  # forged
+        client = _Client()
+
+    assert appmod._client_ip(_Req()) == "100.64.0.9"
+
+
 def test_prune_request_log_bounds_memory(monkeypatch):
     monkeypatch.setattr(appmod, "RATE_LIMIT_MAX_KEYS", 5)
     appmod._request_log.clear()

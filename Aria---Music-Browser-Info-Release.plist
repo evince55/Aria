@@ -29,7 +29,7 @@
 	<key>ARIA_API_KEY</key>
 	<string></string>
 	<key>ARIA_BACKEND_URL</key>
-	<string></string>
+	<string>https://api.chai-homelab.com</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIBackgroundModes</key>

@@ -324,7 +324,21 @@ def _client_ip(request: Request) -> str:
     untrusted. If there are fewer hops than trusted proxies the header is
     spoofed/misconfigured, so we ignore it. With no trusted proxy (the default)
     we ignore XFF entirely and use the direct socket peer.
+
+    Behind a Cloudflare Tunnel the local ``cloudflared`` connects from loopback
+    and sets ``CF-Connecting-IP`` to the real remote client. That header is
+    trusted ONLY when the direct socket peer is loopback (i.e. the request
+    arrived via the local tunnel), so a caller reaching the origin directly over
+    Tailscale/LAN cannot forge a rate-limit identity with it. Requests that
+    bypass the tunnel simply have no ``CF-Connecting-IP`` and fall through.
     """
+    peer = request.client.host if request.client else None
+
+    if peer in ("127.0.0.1", "::1"):
+        cf = request.headers.get("cf-connecting-ip")
+        if cf and cf.strip():
+            return cf.strip()
+
     if TRUSTED_PROXY_COUNT > 0:
         fwd = request.headers.get("x-forwarded-for")
         if fwd:
@@ -333,8 +347,8 @@ def _client_ip(request: Request) -> str:
             if idx >= 0:
                 return parts[idx]
             # Fewer forwarded hops than trusted proxies → don't trust any entry.
-    if request.client and request.client.host:
-        return request.client.host
+    if peer:
+        return peer
     return "unknown"
 
 
