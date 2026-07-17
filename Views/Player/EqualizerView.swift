@@ -4,6 +4,7 @@ struct EqualizerView: View {
     @EnvironmentObject private var playerManager: PlayerManager
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var eq: EQController
+    @Environment(\.dismiss) private var dismiss
 
     @StateObject private var state: EqualizerState
 
@@ -27,15 +28,27 @@ struct EqualizerView: View {
                 VStack(spacing: 0) {
                     presetsBar
                     eqGrid
-                    Spacer()
+                        .frame(maxHeight: .infinity)
                     resetButton
-                        .padding(.bottom, 24)
+                        .padding(.bottom, DS.Spacing.xl)
                 }
             }
             .navigationTitle("Equalizer")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") { dismiss() }
+                        .foregroundColor(themeManager.theme.accentColor)
+                }
+            }
         }
         .onAppear {
+            // Wire the live-apply path *before* the first sync. `onApply`
+            // was a permanent no-op at init (the env-injected
+            // `playerManager` isn't available there); assign it here so
+            // drags, presets, and Reset reach the audio while the sheet
+            // is open — not only on dismiss.
+            state.onApply = { gains in playerManager.applyEQPreset(gains) }
             // First appear with the real env-injected controller.
             // The throwaway bands from `init()` are replaced here.
             state.syncFromController(eq)
@@ -48,9 +61,11 @@ struct EqualizerView: View {
             state.syncFromController(eq)
         }
         .onDisappear {
+            // Fader drags are debounced (only presets/reset apply
+            // synchronously), so dismissing within the debounce window would
+            // otherwise drop the last adjustment. Cancel the pending timer and
+            // flush the current draft directly if it hasn't reached the audio.
             state.cancelPending()
-            // If the user dismissed mid-drag, push the latest value now
-            // so it isn't lost.
             if state.localBands != eq.bands {
                 playerManager.applyEQPreset(state.localBands)
             }
@@ -59,74 +74,120 @@ struct EqualizerView: View {
 
     private var presetsBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
+            HStack(spacing: DS.Spacing.sm) {
                 ForEach(EQPreset.allCases) { preset in
+                    let isSelected = state.localBands == preset.gains
                     Button {
                         state.applyPreset(preset.gains)
                     } label: {
                         Text(preset.rawValue)
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(themeManager.dividerColor)
-                            .cornerRadius(16)
-                            .foregroundColor(themeManager.textPrimary)
+                            .font(DS.Typography.captionStrong)
+                            .padding(.horizontal, DS.Spacing.md)
+                            .padding(.vertical, DS.Spacing.sm)
+                            .background(isSelected
+                                        ? themeManager.theme.accentColor
+                                        : themeManager.surface)
+                            .cornerRadius(DS.Radius.lg)
+                            .foregroundColor(isSelected
+                                             ? .white
+                                             : themeManager.textPrimary)
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, DS.Spacing.lg)
+            .padding(.vertical, DS.Spacing.md)
         }
     }
 
     private var eqGrid: some View {
         HStack(alignment: .bottom, spacing: 0) {
+            dbScaleColumn
             ForEach(0..<10, id: \.self) { i in
-                VStack(spacing: 8) {
-                    Text(String(format: "%.0f", state.localBands[i]))
-                        .font(.caption2)
+                VStack(spacing: DS.Spacing.sm) {
+                    Text(gainReadout(state.localBands[i]))
+                        .font(DS.Typography.micro)
                         .foregroundColor(themeManager.textSecondary)
-                        .frame(height: 12)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(minHeight: 12)
 
-                    Slider(value: Binding<Double>(
-                        get: { Double(state.localBands[i]) },
-                        set: { newValue in
-                            state.setBand(i, to: Float(newValue))
-                        }
-                    ), in: -12...12, step: 0.5)
-                    .tint(themeManager.theme.accentColor)
-                    .rotationEffect(.degrees(-90))
-                    .frame(height: 140)
-                    .padding(.horizontal, 2)
+                    EQBandFader(gain: state.localBands[i]) { newGain in
+                        state.setBand(i, to: newGain)
+                    }
+                    .frame(maxHeight: .infinity)
+                    .padding(.horizontal, DS.Spacing.xs)
+                    .accessibilityLabel("\(frequencyLabel(i)) hertz band")
 
                     Text(frequencyLabel(i))
                         .scaledFont(size: 9, relativeTo: .caption2)
                         .foregroundColor(themeManager.textSecondary)
-                        .frame(height: 12)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(minHeight: 12)
                 }
                 .frame(maxWidth: .infinity)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 16)
-        .frame(height: 240)
+        .padding(.horizontal, DS.Spacing.sm)
+        .padding(.top, DS.Spacing.lg)
+    }
+
+    /// Thin left-edge dB scale (+12 / 0 / -12) aligned to the fader track
+    /// height. The hidden placeholders mirror the gain readout and
+    /// frequency label so the scale lines up with the fader midline.
+    private var dbScaleColumn: some View {
+        VStack(spacing: DS.Spacing.sm) {
+            Text(" ")
+                .font(DS.Typography.micro)
+                .frame(minHeight: 12)
+                .hidden()
+
+            VStack {
+                Text("+12")
+                Spacer()
+                Text("0")
+                Spacer()
+                Text("-12")
+            }
+            .font(DS.Typography.micro)
+            .foregroundColor(themeManager.textSecondary)
+            .frame(maxHeight: .infinity)
+
+            Text(" ")
+                .scaledFont(size: 9, relativeTo: .caption2)
+                .frame(minHeight: 12)
+                .hidden()
+        }
+        .padding(.trailing, DS.Spacing.xs)
+    }
+
+    /// Signed, unit-suffixed readout with a `-0` guard.
+    private func gainReadout(_ g: Float) -> String {
+        let v = abs(g) < 0.05 ? 0 : g
+        // Faders snap to 0.5 dB, so show one decimal for half-steps; keep
+        // whole values compact ("+3 dB", not "+3.0 dB").
+        return v == v.rounded()
+            ? String(format: "%+.0f dB", v)
+            : String(format: "%+.1f dB", v)
     }
 
     private var resetButton: some View {
-        Button {
+        let isFlat = state.localBands.allSatisfy { $0 == 0 }
+        return Button {
             state.reset()
         } label: {
             Text("Reset")
-                .font(.body)
-                .fontWeight(.semibold)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(themeManager.dividerColor)
-                .cornerRadius(12)
-                .foregroundColor(themeManager.textPrimary)
+                .font(DS.Typography.captionStrong)
+                .foregroundColor(themeManager.theme.accentColor)
+                .padding(.horizontal, DS.Spacing.lg)
+                .padding(.vertical, DS.Spacing.sm)
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.md)
+                        .stroke(themeManager.tokens.hairline, lineWidth: 1)
+                )
         }
-        .padding(.horizontal, 24)
+        .disabled(isFlat)
+        .opacity(isFlat ? 0.4 : 1)
     }
 
     private func frequencyLabel(_ index: Int) -> String {

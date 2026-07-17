@@ -24,7 +24,10 @@ final class EqualizerState: ObservableObject {
 
     @Published private(set) var localBands: [Float]
 
-    private let onApply: ([Float]) -> Void
+    /// Settable so the view can wire the env-injected `PlayerManager` at
+    /// `.onAppear` (it isn't available at `init()`). Defaults to the
+    /// closure passed at init.
+    var onApply: ([Float]) -> Void
     private let debouncer: Debouncer
 
     /// True between `setBand` and the moment the debounced flush runs (or
