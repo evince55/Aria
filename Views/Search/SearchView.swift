@@ -54,7 +54,7 @@ struct SearchView: View {
                 if let cached = results.value, !cached.isEmpty {
                     resultsList(cached)
                 } else {
-                    browseContent
+                    searchLoadingView
                 }
             case .loaded(let tracks):
                 resultsList(tracks)
@@ -86,6 +86,21 @@ struct SearchView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, DS.Spacing.lg)
+    }
+
+    /// Shown while a fresh search is in flight (no prior results to keep on
+    /// screen). Without this the `.loading` state fell through to an empty
+    /// browse view — a blank screen with no feedback.
+    private var searchLoadingView: some View {
+        VStack(spacing: DS.Spacing.md) {
+            ProgressView()
+                .controlSize(.large)
+                .tint(tokens.accent)
+            Text("Searching…")
+                .font(DS.Typography.caption)
+                .foregroundColor(tokens.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Browse
