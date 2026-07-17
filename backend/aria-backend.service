@@ -1,6 +1,6 @@
 [Unit]
 Description=Aria Backend
-Documentation=https://github.com/chaitea321/MusicAppIOS
+Documentation=https://github.com/evince55/Aria
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
