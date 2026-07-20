@@ -17,7 +17,7 @@ struct LibraryView: View {
 
     enum LibraryTab: String, CaseIterable {
         case offlineTracks = "Offline Tracks"
-        case youtubeDownloads = "YouTube Downloads"
+        case youtubeDownloads = "Downloads"
     }
 
     @AppStorage("librarySortOrder") private var sortOrderRaw: String = LibrarySortOrder.recentlyAdded.rawValue

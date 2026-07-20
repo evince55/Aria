@@ -3,8 +3,8 @@
 <plist version="1.0">
 <!-- Release Info.plist — mirrors Aria---Music-Browser-Info.plist minus the
      dev-only ATS bypasses (NSAllowsArbitraryLoads and the homelab IP/TLSv1.0
-     exception). Release builds therefore require an HTTPS backend: set
-     ARIA_BACKEND_URL below, or configure the server URL in-app. Keep the two
+     exception). Release builds therefore require an HTTPS backend,
+     configured in-app (see ARIA_BACKEND_URL below). Keep the two
      plists' shared keys in sync when adding new configuration. -->
 <dict>
 	<key>NSAppTransportSecurity</key>
@@ -28,8 +28,11 @@
 	<string>192.0.2.1</string>
 	<key>ARIA_API_KEY</key>
 	<string></string>
+	<!-- Intentionally empty: public builds ship with no bundled server —
+	     users bring their own. For personal Release builds the owner enters
+	     the tunnel URL via the in-app Settings → Backend override. -->
 	<key>ARIA_BACKEND_URL</key>
-	<string>https://api.chai-homelab.com</string>
+	<string></string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIBackgroundModes</key>
