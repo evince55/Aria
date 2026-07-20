@@ -124,6 +124,62 @@ final class AudioEQ {
         }
     }
 
+    // MARK: - Parametric (Pro)
+
+    /// Reconfigures the AUNBandEQ from a parametric preset: per-band filter
+    /// type, centre frequency, bandwidth (converted from Q), and gain, plus the
+    /// preset's global preamp gain. Bands beyond the preset are bypassed. One
+    /// lock acquisition for the whole batch so the render thread never sees a
+    /// half-applied curve.
+    func applyParametric(_ preset: ParametricEQPreset) {
+        lock.withLockUnchecked {
+            guard let au = self.au else { return }
+            let bands = Array(preset.bands.prefix(Self.bandCount))
+            for i in 0..<Self.bandCount {
+                let band = AudioUnitParameterID(i)
+                if i < bands.count {
+                    let b = bands[i]
+                    applyParam(au, kAUNBandEQParam_FilterType + band, Float(Self.filterTypeValue(b.type)))
+                    applyParam(au, kAUNBandEQParam_Frequency + band, b.frequency.clamped(to: 20...20_000))
+                    applyParam(au, kAUNBandEQParam_Bandwidth + band, b.bandwidthOctaves.clamped(to: 0.05...5))
+                    applyParam(au, kAUNBandEQParam_Gain + band, b.gain.clamped(to: -24...24))
+                    applyParam(au, kAUNBandEQParam_BypassBand + band, 0)
+                } else {
+                    applyParam(au, kAUNBandEQParam_Gain + band, 0)
+                    applyParam(au, kAUNBandEQParam_BypassBand + band, 1)
+                }
+            }
+            applyParam(au, kAUNBandEQParam_GlobalGain, preset.preamp.clamped(to: -24...24))
+        }
+    }
+
+    /// Restores the graphic-EQ configuration after parametric mode: bell
+    /// filters at the fixed band frequencies, default bandwidth, no preamp.
+    func applyGraphic(frequencies: [Float], gains: [Float]) {
+        lock.withLockUnchecked {
+            guard let au = self.au else { return }
+            for i in 0..<Self.bandCount {
+                let band = AudioUnitParameterID(i)
+                applyParam(au, kAUNBandEQParam_FilterType + band, Float(Self.filterTypeValue(.peak)))
+                if i < frequencies.count {
+                    applyParam(au, kAUNBandEQParam_Frequency + band, frequencies[i])
+                }
+                applyParam(au, kAUNBandEQParam_Bandwidth + band, 0.5)
+                applyParam(au, kAUNBandEQParam_Gain + band, i < gains.count ? gains[i] : 0)
+                applyParam(au, kAUNBandEQParam_BypassBand + band, 0)
+            }
+            applyParam(au, kAUNBandEQParam_GlobalGain, 0)
+        }
+    }
+
+    private static func filterTypeValue(_ type: ParametricFilterType) -> Int {
+        switch type {
+        case .peak: return kAUNBandEQFilterType_Parametric
+        case .lowShelf: return kAUNBandEQFilterType_LowShelf
+        case .highShelf: return kAUNBandEQFilterType_HighShelf
+        }
+    }
+
     // MARK: - Render (audio thread)
 
     /// Renders `frames` of audio from `source` through the EQ into `output`.

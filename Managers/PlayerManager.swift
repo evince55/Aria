@@ -484,6 +484,32 @@ final class PlayerManager: NSObject, ObservableObject {
         avPlayerPath.setEQEnabled(false)
     }
 
+    /// Applies an imported parametric curve (Aria Pro). Mirrors `applyEQPreset`
+    /// with the parametric payload: the live tap is reconfigured in place, and
+    /// a fresh item picks the preset up via `attachEQ`.
+    func applyParametricEQ(_ preset: ParametricEQPreset) {
+        let outcome = eq.setParametric(preset)
+        switch outcome {
+        case .noChange, .stillEnabled:
+            avPlayerPath.updateParametricEQ(preset)
+        case .becameEnabled:
+            avPlayerPath.updateParametricEQ(preset)
+            avPlayerPath.setEQEnabled(true)
+        case .becameDisabled:
+            avPlayerPath.setEQEnabled(false)  // unreachable for a set; exhaustive
+        }
+    }
+
+    /// Removes the parametric curve, restoring the graphic bands (which may be
+    /// flat → EQ turns off).
+    func clearParametricEQ() {
+        let outcome = eq.clearParametric()
+        avPlayerPath.updateParametricEQ(nil)
+        if outcome == .becameDisabled {
+            avPlayerPath.setEQEnabled(false)
+        }
+    }
+
     private func handleEQOutcome(_ outcome: EQApplyOutcome) {
         // EQ runs through the real-time AVPlayer tap for both streamed and
         // local tracks — live, no engine, no download, no playback restart.

@@ -192,7 +192,7 @@ final class AVPlayerPath {
         // Fresh item → fresh tap. Attach now if EQ is already on.
         eqTap = nil
         if player.eq.isEnabled {
-            attachEQ(bands: player.eq.bands)
+            attachEQ()
         }
 
         if let seek = pendingSeek {
@@ -211,8 +211,8 @@ final class AVPlayerPath {
         if enabled {
             if let tap = eqTap {
                 tap.setBypass(false)
-            } else if let bands = player?.eq.bands {
-                attachEQ(bands: bands)
+            } else if player?.eq != nil {
+                attachEQ()
             }
         } else {
             eqTap?.setBypass(true)
@@ -223,11 +223,24 @@ final class AVPlayerPath {
         eqTap?.setBands(bands)
     }
 
+    /// Applies or clears the parametric curve on the live tap; `nil` restores
+    /// the graphic configuration (fixed frequencies + current gains).
+    func updateParametricEQ(_ preset: ParametricEQPreset?) {
+        if let preset {
+            eqTap?.setParametric(preset)
+        } else {
+            eqTap?.setGraphic(gains: player?.eq.bands ?? [])
+        }
+    }
+
     /// Builds an `AudioEQTap`, loads the current item's audio track, and sets the
     /// resulting `audioMix` — applying EQ to the live stream with no download.
-    private func attachEQ(bands: [Float]) {
-        guard let item = playerItem else { return }
-        let tap = AudioEQTap(frequencies: PlayerManager.eqFrequencies, bands: bands, bypassed: false)
+    /// Reads the full EQ state (graphic bands + optional parametric curve) from
+    /// the player's `EQController` so a fresh item starts with the right mode.
+    private func attachEQ() {
+        guard let item = playerItem, let eq = player?.eq else { return }
+        let tap = AudioEQTap(frequencies: PlayerManager.eqFrequencies, bands: eq.bands,
+                             bypassed: false, parametric: eq.parametric)
         eqTap = tap
         let asset = item.asset
         Task { @MainActor [weak self] in
