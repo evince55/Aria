@@ -7,7 +7,9 @@ struct MoreView: View {
     @EnvironmentObject private var playlistsManager: PlaylistsManager
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
     @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var proStore: ProStore
 
+    @State private var showProSheet = false
     @State private var showClearFavoritesAlert = false
     @State private var showDeletePlaylistsAlert = false
     @State private var showClearCacheAlert = false
@@ -26,6 +28,7 @@ struct MoreView: View {
                 ScrollView {
                     VStack(spacing: DS.Spacing.xl) {
                         heroHeader
+                        proSection
                         settingsSection
                         backendSection
                         advancedSection
@@ -85,6 +88,49 @@ struct MoreView: View {
         } message: {
             Text("This clears Recently Played and Recently Added, which drive the personalized rows on the Search page.")
         }
+        .sheet(isPresented: $showProSheet) {
+            AriaProView()
+        }
+    }
+
+    // MARK: - Aria Pro
+
+    private var proSection: some View {
+        Button {
+            Haptics.light()
+            showProSheet = true
+        } label: {
+            HStack(spacing: DS.Spacing.md) {
+                iconBadge(systemName: "crown.fill", color: .orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Aria Pro")
+                        .font(DS.Typography.bodyEm)
+                        .foregroundColor(tokens.textPrimary)
+                    Text(proStore.isPro
+                         ? "Unlocked — thank you!"
+                         : "One-time unlock · parametric EQ, smart playlists & more")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(tokens.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if proStore.isPro {
+                    Image(systemName: "checkmark.seal.fill")
+                        .foregroundColor(.green)
+                } else {
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(tokens.textSecondary)
+                }
+            }
+            .padding(DS.Spacing.md)
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                    .fill(tokens.surface)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(proStore.isPro ? "Aria Pro, unlocked" : "Aria Pro, one-time unlock")
     }
 
     // MARK: - Hero

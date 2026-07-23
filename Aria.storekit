@@ -1,0 +1,33 @@
+{
+  "identifier" : "A81A0000-0000-4000-8000-ARIASTOREKIT",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : true,
+      "internalID" : "ARIA_PRO_0001",
+      "localizations" : [
+        {
+          "description" : "One-time lifetime unlock for Aria's Pro features.",
+          "displayName" : "Aria Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.chaitea321.aria.pro",
+      "referenceName" : "Aria Pro",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 2,
+    "minor" : 0
+  }
+}
