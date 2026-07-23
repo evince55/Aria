@@ -17,8 +17,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
-		A5C0DE20260723000000AA01 /* Aria.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Aria.storekit; sourceTree = "<group>"; };
 		A1B2C3D4E5F60718293A4B5D /* AriaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AriaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A5C0DE20260723000000AA01 /* Aria.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = Aria.storekit; sourceTree = "<group>"; };
 		D7D8FDAB2FB68CD200BDEF51 /* Aria - Music Browser.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Aria - Music Browser.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
