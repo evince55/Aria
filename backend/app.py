@@ -1136,6 +1136,12 @@ async def search(
 async def resolve(
     request: Request,
     video_id: str = Query(..., description="YouTube video ID"),
+    fresh: bool = Query(False, description=(
+        "Skip the resolve-cache read and force a new yt-dlp extraction. Sent by "
+        "clients retrying a failed stream: a cached googlevideo URL can be "
+        "invalidated by YouTube mid-TTL, and without this flag every retry "
+        "would be served the same dead URL until the cache expired."
+    )),
     _auth: None = Depends(_require_api_key),
 ):
     """
@@ -1149,9 +1155,12 @@ async def resolve(
     _enforce_rate_limit(request, "play", RATE_LIMIT_PLAY_PER_MIN)
 
     now = time.time()
-    cached = _resolve_cache.get(video_id)
-    if cached and now - cached[1] < RESOLVE_CACHE_TTL:
-        return cached[0]
+    if not fresh:
+        cached = _resolve_cache.get(video_id)
+        if cached and now - cached[1] < RESOLVE_CACHE_TTL:
+            return cached[0]
+    # The write below stays unconditional: a fresh resolve REPLACES the cached
+    # entry, so one client retry heals the cache for everyone.
 
     try:
         async with _ytdl_search_semaphore:

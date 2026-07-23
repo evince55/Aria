@@ -6,6 +6,7 @@ import XCTest
 private final class CountingResolver: StreamResolving, @unchecked Sendable {
     private let lock = NSLock()
     private(set) var resolveCount = 0
+    private(set) var freshCount = 0
 
     func stream(for videoID: String) async throws -> URL {
         URL(string: "https://example.com/\(videoID)")!
@@ -14,6 +15,11 @@ private final class CountingResolver: StreamResolving, @unchecked Sendable {
     func resolve(for videoID: String) async throws -> ResolvedStream {
         lock.lock(); resolveCount += 1; lock.unlock()
         return ResolvedStream(url: URL(string: "https://example.com/\(videoID).m4a")!, duration: 123)
+    }
+
+    func resolve(for videoID: String, fresh: Bool) async throws -> ResolvedStream {
+        if fresh { lock.lock(); freshCount += 1; lock.unlock() }
+        return try await resolve(for: videoID)
     }
 }
 
@@ -95,6 +101,33 @@ final class StreamPrefetcherTests: XCTestCase {
         _ = try await prefetcher.resolve(for: "b")
         _ = try await prefetcher.resolve(for: "c")
         XCTAssertEqual(resolver.resolveCount, 3, "all three should be served from cache")
+    }
+
+    func test_freshResolve_bypassesWarmCacheAndPropagatesFresh() async throws {
+        let resolver = CountingResolver()
+        let prefetcher = StreamPrefetcher(resolver: resolver)
+
+        await prefetcher.prefetch("abc")
+        await prefetcher.waitForPrefetch()
+        XCTAssertEqual(resolver.resolveCount, 1)
+
+        // Failure recovery: the warm entry may hold the exact URL that just
+        // died — it must be dropped and the resolve forced through fresh.
+        _ = try await prefetcher.resolve(for: "abc", fresh: true)
+        XCTAssertEqual(resolver.resolveCount, 2, "fresh must not serve the cached entry")
+        XCTAssertEqual(resolver.freshCount, 1, "fresh must propagate to the underlying resolver")
+    }
+
+    func test_nonFreshResolve_keepsCacheSemantics() async throws {
+        let resolver = CountingResolver()
+        let prefetcher = StreamPrefetcher(resolver: resolver)
+
+        await prefetcher.prefetch("abc")
+        await prefetcher.waitForPrefetch()
+
+        _ = try await prefetcher.resolve(for: "abc", fresh: false)
+        XCTAssertEqual(resolver.resolveCount, 1, "fresh:false behaves exactly like the cached path")
+        XCTAssertEqual(resolver.freshCount, 0)
     }
 
     func test_batchPrefetch_dropsEntriesNoLongerUpcoming() async throws {

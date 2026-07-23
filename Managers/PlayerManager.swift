@@ -847,14 +847,18 @@ final class PlayerManager: NSObject, ObservableObject {
     /// Resolves a streamed track to a direct URL and plays it instantly via
     /// AVPlayer. EQ (if on) is applied by the real-time tap inside `AVPlayerPath`
     /// — one path for streamed and local, no engine, no download.
-    private func fetchStreamURL(for videoID: String, generation: Int) {
+    /// `fresh` is set by the failure-recovery paths (item failure, stall): it
+    /// bypasses the prefetcher AND the backend resolve cache, because the
+    /// cached URL is exactly what just failed — retrying through the caches
+    /// would re-fetch the same dead URL for the rest of its TTL.
+    private func fetchStreamURL(for videoID: String, generation: Int, fresh: Bool = false) {
         streamTask?.cancel()
         streamTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
             let resolved: ResolvedStream
             do {
-                resolved = try await self.prefetcher.resolve(for: videoID)
+                resolved = try await self.prefetcher.resolve(for: videoID, fresh: fresh)
             } catch is CancellationError {
                 return
             } catch {
@@ -920,11 +924,11 @@ final class PlayerManager: NSObject, ObservableObject {
     func handleAVPlayerItemFailure(_ error: Error?) {
         if let videoID = currentVideoID, !didRetryResolve {
             didRetryResolve = true
-            log.notice("AVPlayer item failed; re-resolving \(videoID, privacy: .public) once")
+            log.notice("AVPlayer item failed; re-resolving \(videoID, privacy: .public) once (fresh)")
             playGeneration += 1
             let gen = playGeneration
             playbackState = .loading
-            fetchStreamURL(for: videoID, generation: gen)
+            fetchStreamURL(for: videoID, generation: gen, fresh: true)
             return
         }
         isPlaying = false
@@ -946,7 +950,7 @@ final class PlayerManager: NSObject, ObservableObject {
         playGeneration += 1
         let gen = playGeneration
         playbackState = .loading
-        fetchStreamURL(for: videoID, generation: gen)
+        fetchStreamURL(for: videoID, generation: gen, fresh: true)
     }
 
     /// Called by `AVPlayerPath` when the item reports it can keep up again —

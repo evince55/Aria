@@ -54,6 +54,18 @@ actor StreamPrefetcher: StreamResolving {
         return try await resolver.resolve(for: videoID)
     }
 
+    /// Failure-recovery resolve: drops any cached/in-flight entry for the id
+    /// (it may hold the exact URL that just failed) and forces the backend to
+    /// bypass its resolve cache too, so the retry gets a genuinely new URL.
+    func resolve(for videoID: String, fresh: Bool) async throws -> ResolvedStream {
+        guard fresh else { return try await resolve(for: videoID) }
+        inFlight[videoID]?.cancel()
+        inFlight[videoID] = nil
+        cache[videoID] = nil
+        log.notice("fresh resolve \(videoID, privacy: .public)")
+        return try await resolver.resolve(for: videoID, fresh: true)
+    }
+
     /// Fire-and-forget: resolve `videoID` and stash it for the next
     /// `resolve(for:)`. Additive — several tracks can be warmed at once
     /// (see the batch overload); a track already cached or in flight is skipped.

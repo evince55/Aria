@@ -23,6 +23,18 @@ protocol StreamResolving: Sendable {
     /// is yt-dlp's true video length, used to cap the YouTube DASH
     /// 2x-with-silence streams that the download path trims server-side.
     func resolve(for videoID: String) async throws -> ResolvedStream
+    /// Failure-recovery variant: bypasses every cache layer (client and
+    /// backend) so a retry gets a genuinely NEW signed URL. YouTube can
+    /// invalidate a URL mid-TTL; retrying through the caches would just
+    /// re-fetch the same dead one.
+    func resolve(for videoID: String, fresh: Bool) async throws -> ResolvedStream
+}
+
+extension StreamResolving {
+    /// Resolvers with no cache of their own have no freshness distinction.
+    func resolve(for videoID: String, fresh: Bool) async throws -> ResolvedStream {
+        try await resolve(for: videoID)
+    }
 }
 
 /// Result of `/api/resolve`: a directly-playable URL plus the authoritative
@@ -79,7 +91,15 @@ actor StreamResolver: StreamResolving {
     /// `/api/resolve` — no server-side download. The returned URL is absolute
     /// (googlevideo), signed, and short-lived.
     func resolve(for videoID: String) async throws -> ResolvedStream {
-        guard let endpoint = URL(string: "\(backendURL)/api/resolve?video_id=\(videoID)") else {
+        try await resolve(for: videoID, fresh: false)
+    }
+
+    /// `fresh` adds `&fresh=1`, which makes the backend skip its resolve cache
+    /// (and overwrite it with the new URL) — the escape hatch for retrying a
+    /// stream whose cached URL YouTube has invalidated.
+    func resolve(for videoID: String, fresh: Bool) async throws -> ResolvedStream {
+        let freshSuffix = fresh ? "&fresh=1" : ""
+        guard let endpoint = URL(string: "\(backendURL)/api/resolve?video_id=\(videoID)\(freshSuffix)") else {
             throw StreamResolverError.invalidEndpoint
         }
 

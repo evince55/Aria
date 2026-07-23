@@ -510,6 +510,31 @@ def test_resolve_does_not_cache_failures(client, monkeypatch):
     assert "dQw4w9WgXcQ" not in appmod._resolve_cache
 
 
+def test_resolve_fresh_bypasses_and_replaces_cache(client, monkeypatch):
+    """A client retrying a dead stream URL sends fresh=1: the cache read is
+    skipped (same-TTL entry ignored), a new extraction runs, and the NEW URL
+    replaces the cached one so subsequent normal resolves are healed too."""
+    calls = {"n": 0}
+
+    def fake(video_id):
+        calls["n"] += 1
+        return {"url": f"https://googlevideo.example/audio-v{calls['n']}", "duration": 100}
+
+    monkeypatch.setattr(appmod, "_resolve_sync", fake)
+
+    r1 = client.get("/api/resolve", params={"video_id": "dQw4w9WgXcQ"})
+    assert r1.json()["url"].endswith("audio-v1") and calls["n"] == 1
+
+    # YouTube invalidated v1 → client retries with fresh=1: cache is bypassed.
+    r2 = client.get("/api/resolve", params={"video_id": "dQw4w9WgXcQ", "fresh": "1"})
+    assert r2.json()["url"].endswith("audio-v2") and calls["n"] == 2
+
+    # The fresh result replaced the poisoned entry: a normal resolve now serves
+    # v2 from cache with no new extraction.
+    r3 = client.get("/api/resolve", params={"video_id": "dQw4w9WgXcQ"})
+    assert r3.json()["url"].endswith("audio-v2") and calls["n"] == 2
+
+
 def test_radio_filters_seed_and_returns_list(client, monkeypatch):
     monkeypatch.setattr(appmod, "_radio_sync", lambda seed, limit: [
         {"id": "aaaaaaaaaaa", "title": "x", "artist": "y", "thumbnail": "t", "duration": 1},
