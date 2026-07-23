@@ -12,6 +12,7 @@ final class AudioEQTap {
     private let eq = AudioEQ()
     private let frequencies: [Float]
     private let initialBands: [Float]
+    private let initialParametric: ParametricEQPreset?
 
     /// Read on the audio render thread; written from the UI thread. A plain Bool
     /// is fine — a torn read just applies EQ one buffer early/late.
@@ -20,10 +21,12 @@ final class AudioEQTap {
     /// Monotonic sample clock for `AudioUnitRender`, advanced per process call.
     fileprivate var renderSampleTime: Float64 = 0
 
-    init(frequencies: [Float], bands: [Float], bypassed: Bool) {
+    init(frequencies: [Float], bands: [Float], bypassed: Bool,
+         parametric: ParametricEQPreset? = nil) {
         self.frequencies = frequencies
         self.initialBands = bands
         self.bypassed = bypassed
+        self.initialParametric = parametric
     }
 
     // MARK: - Control (UI thread)
@@ -32,6 +35,10 @@ final class AudioEQTap {
     func setBands(_ gains: [Float]) {
         for (i, g) in gains.enumerated() where i < AudioEQ.bandCount { eq.setBand(i, gain: g) }
     }
+    /// Switches the live tap to a parametric curve (AutoEQ profile).
+    func setParametric(_ preset: ParametricEQPreset) { eq.applyParametric(preset) }
+    /// Restores the graphic configuration (fixed band frequencies + gains).
+    func setGraphic(gains: [Float]) { eq.applyGraphic(frequencies: frequencies, gains: gains) }
     func setBypass(_ b: Bool) {
         bypassed = b
         eq.setBypass(b)
@@ -76,7 +83,11 @@ final class AudioEQTap {
 
     fileprivate func prepare(format: AudioStreamBasicDescription) {
         try? eq.prepare(format: format, frequencies: frequencies)
-        setBands(initialBands)
+        if let preset = initialParametric {
+            eq.applyParametric(preset)
+        } else {
+            setBands(initialBands)
+        }
         eq.setBypass(bypassed)
     }
 

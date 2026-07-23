@@ -32,7 +32,7 @@ struct AriaApp: App {
             log.error("Failed to set audio session category: \(error.localizedDescription, privacy: .public)")
         }
         let settings = SettingsManager()
-        let eq = EQController()
+        let eq = EQController(store: JSONFileStore(filename: "eq_settings.json"))
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let libraryDir = docs.appendingPathComponent("AriaLibrary", isDirectory: true)
         let libraryManager = LocalLibraryManager(

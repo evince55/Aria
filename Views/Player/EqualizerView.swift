@@ -1,12 +1,19 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct EqualizerView: View {
     @EnvironmentObject private var playerManager: PlayerManager
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var eq: EQController
+    @EnvironmentObject private var proStore: ProStore
     @Environment(\.dismiss) private var dismiss
 
     @StateObject private var state: EqualizerState
+    @State private var showAutoEQBrowser = false
+    @State private var showAutoEQImporter = false
+    @State private var pendingFileImport = false
+    @State private var showPaywall = false
+    @State private var importError: String?
 
     init() {
         // The view is bound to the env-injected `EQController`, but
@@ -26,11 +33,16 @@ struct EqualizerView: View {
                 themeManager.background.ignoresSafeArea()
 
                 VStack(spacing: 0) {
-                    presetsBar
-                    eqGrid
-                        .frame(maxHeight: .infinity)
-                    resetButton
-                        .padding(.bottom, DS.Spacing.xl)
+                    if let preset = eq.parametric {
+                        parametricActiveView(preset)
+                    } else {
+                        presetsBar
+                        eqGrid
+                            .frame(maxHeight: .infinity)
+                        autoEQRow
+                        resetButton
+                            .padding(.bottom, DS.Spacing.xl)
+                    }
                 }
             }
             .navigationTitle("Equalizer")
@@ -65,10 +77,41 @@ struct EqualizerView: View {
             // synchronously), so dismissing within the debounce window would
             // otherwise drop the last adjustment. Cancel the pending timer and
             // flush the current draft directly if it hasn't reached the audio.
+            // Skipped in parametric mode — the faders are dormant there and a
+            // stale draft must not stomp the imported curve.
             state.cancelPending()
-            if state.localBands != eq.bands {
+            if eq.parametric == nil && state.localBands != eq.bands {
                 playerManager.applyEQPreset(state.localBands)
             }
+        }
+        .sheet(isPresented: $showAutoEQBrowser, onDismiss: {
+            // The browser's folder button defers to the file importer; a sheet
+            // can't present another sheet, so chain it through onDismiss.
+            if pendingFileImport {
+                pendingFileImport = false
+                showAutoEQImporter = true
+            }
+        }) {
+            AutoEQBrowserView(
+                onApply: { playerManager.applyParametricEQ($0) },
+                onImportFile: { pendingFileImport = true }
+            )
+        }
+        .fileImporter(isPresented: $showAutoEQImporter,
+                      allowedContentTypes: [.plainText, .text],
+                      allowsMultipleSelection: false) { result in
+            handleAutoEQImport(result)
+        }
+        .sheet(isPresented: $showPaywall) {
+            AriaProView()
+        }
+        .alert("AutoEQ Import", isPresented: .init(
+            get: { importError != nil },
+            set: { if !$0 { importError = nil } }
+        )) {
+            Button("OK", role: .cancel) { importError = nil }
+        } message: {
+            Text(importError ?? "")
         }
     }
 
@@ -188,6 +231,165 @@ struct EqualizerView: View {
         }
         .disabled(isFlat)
         .opacity(isFlat ? 0.4 : 1)
+    }
+
+    // MARK: - AutoEQ (Pro)
+
+    /// Entry point for AutoEQ profiles: opens the searchable headphone catalog
+    /// (with file import as its fallback). Locked behind Aria Pro — the
+    /// non-Pro tap opens the paywall instead.
+    private var autoEQRow: some View {
+        Button {
+            Haptics.light()
+            if proStore.isPro {
+                showAutoEQBrowser = true
+            } else {
+                showPaywall = true
+            }
+        } label: {
+            HStack(spacing: DS.Spacing.sm) {
+                Image(systemName: proStore.isPro ? "waveform.badge.plus" : "lock.fill")
+                    .foregroundColor(themeManager.theme.accentColor)
+                Text("AutoEQ Profile")
+                    .font(DS.Typography.captionStrong)
+                    .foregroundColor(themeManager.textPrimary)
+                if !proStore.isPro {
+                    Text("PRO")
+                        .font(DS.Typography.micro)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(themeManager.theme.accentColor))
+                        .foregroundColor(.white)
+                }
+            }
+            .padding(.horizontal, DS.Spacing.lg)
+            .padding(.vertical, DS.Spacing.sm)
+            .background(
+                Capsule().fill(themeManager.surface)
+            )
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, DS.Spacing.sm)
+        .accessibilityLabel(proStore.isPro
+                            ? "Choose an AutoEQ profile for your headphones"
+                            : "AutoEQ profile, requires Aria Pro")
+    }
+
+    /// Replaces the fader grid while an imported parametric curve is active.
+    private func parametricActiveView(_ preset: ParametricEQPreset) -> some View {
+        ScrollView {
+            VStack(spacing: DS.Spacing.lg) {
+                VStack(spacing: DS.Spacing.xs) {
+                    Image(systemName: "waveform.path")
+                        .font(.system(size: 34, weight: .light))
+                        .foregroundColor(themeManager.theme.accentColor)
+                    Text(preset.name)
+                        .font(DS.Typography.titleMedium)
+                        .foregroundColor(themeManager.textPrimary)
+                        .multilineTextAlignment(.center)
+                    Text("\(preset.bands.count) filters · preamp \(String(format: "%+.1f", preset.preamp)) dB")
+                        .font(DS.Typography.caption)
+                        .foregroundColor(themeManager.textSecondary)
+                    if preset.bands.count > EQController.bandCount {
+                        Text("First \(EQController.bandCount) filters applied (hardware limit)")
+                            .font(DS.Typography.micro)
+                            .foregroundColor(.orange)
+                    }
+                }
+                .padding(.top, DS.Spacing.lg)
+
+                VStack(spacing: 0) {
+                    ForEach(Array(preset.bands.enumerated()), id: \.offset) { index, band in
+                        bandRow(band)
+                        if index < preset.bands.count - 1 {
+                            Divider()
+                                .background(themeManager.tokens.hairline)
+                                .padding(.leading, DS.Spacing.xxl)
+                        }
+                    }
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                        .fill(themeManager.surface)
+                )
+
+                Text("Parametric curve active — the graphic faders and presets are dormant until you remove it.")
+                    .font(DS.Typography.micro)
+                    .foregroundColor(themeManager.textSecondary)
+                    .multilineTextAlignment(.center)
+
+                Button {
+                    Haptics.warning()
+                    playerManager.clearParametricEQ()
+                } label: {
+                    Text("Remove Profile")
+                        .font(DS.Typography.captionStrong)
+                        .foregroundColor(.red)
+                        .padding(.horizontal, DS.Spacing.lg)
+                        .padding(.vertical, DS.Spacing.sm)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: DS.Radius.md)
+                                .stroke(themeManager.tokens.hairline, lineWidth: 1)
+                        )
+                }
+                .padding(.bottom, DS.Spacing.xl)
+            }
+            .padding(.horizontal, DS.Spacing.lg)
+        }
+    }
+
+    private func bandRow(_ band: ParametricBand) -> some View {
+        HStack(spacing: DS.Spacing.md) {
+            Text(filterLabel(band.type))
+                .font(DS.Typography.micro)
+                .fontWeight(.bold)
+                .foregroundColor(themeManager.theme.accentColor)
+                .frame(width: 28, alignment: .leading)
+            Text(frequencyText(band.frequency))
+                .font(DS.Typography.caption)
+                .foregroundColor(themeManager.textPrimary)
+            Spacer()
+            Text(String(format: "%+.1f dB", band.gain))
+                .font(DS.Typography.caption)
+                .foregroundColor(themeManager.textPrimary)
+                .monospacedDigit()
+            Text(String(format: "Q %.2f", band.q))
+                .font(DS.Typography.micro)
+                .foregroundColor(themeManager.textSecondary)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, DS.Spacing.md)
+        .padding(.vertical, DS.Spacing.sm)
+    }
+
+    private func filterLabel(_ type: ParametricFilterType) -> String {
+        switch type {
+        case .peak: return "PK"
+        case .lowShelf: return "LS"
+        case .highShelf: return "HS"
+        }
+    }
+
+    private func frequencyText(_ hz: Float) -> String {
+        hz >= 1000
+            ? String(format: "%.1f kHz", hz / 1000)
+            : String(format: "%.0f Hz", hz)
+    }
+
+    private func handleAutoEQImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let url = urls.first else { return }
+        let secured = url.startAccessingSecurityScopedResource()
+        defer { if secured { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let name = url.deletingPathExtension().lastPathComponent
+            let preset = try AutoEQParser.parse(text, name: name)
+            Haptics.medium()
+            playerManager.applyParametricEQ(preset)
+        } catch {
+            importError = error.localizedDescription
+        }
     }
 
     private func frequencyLabel(_ index: Int) -> String {
