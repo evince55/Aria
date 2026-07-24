@@ -58,6 +58,10 @@ private struct ProStoreKey: EnvironmentKey {
     @MainActor static var defaultValue: ProStore { ProStore() }
 }
 
+private struct SmartPlaylistsManagerKey: EnvironmentKey {
+    @MainActor static var defaultValue: SmartPlaylistsManager { SmartPlaylistsManager() }
+}
+
 extension EnvironmentValues {
     var playerManager: PlayerManager {
         get { self[PlayerManagerKey.self] }
@@ -98,5 +102,9 @@ extension EnvironmentValues {
     var proStore: ProStore {
         get { self[ProStoreKey.self] }
         set { self[ProStoreKey.self] = newValue }
+    }
+    var smartPlaylistsManager: SmartPlaylistsManager {
+        get { self[SmartPlaylistsManagerKey.self] }
+        set { self[SmartPlaylistsManagerKey.self] = newValue }
     }
 }
