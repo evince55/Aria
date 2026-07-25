@@ -156,22 +156,18 @@ final class AVPlayerPath {
                 } else if item.status == .readyToPlay {
                     let itemDuration = item.duration
                     if itemDuration.isNumeric && !itemDuration.isIndefinite {
-                        var resolved = self.correctedDuration(for: item)
-                        // The track-vs-container heuristic misses the case where
-                        // BOTH are doubled (DASH song + equal silence). When the
-                        // backend gave us the true length and the container is
-                        // materially longer, trust the backend and cap there.
-                        if let known = self.knownDuration, known > 0 {
-                            let itemSec = CMTimeGetSeconds(itemDuration)
-                            if itemSec > known * 1.1 {
-                                resolved = CMTime(seconds: known, preferredTimescale: 600)
-                            }
-                        }
-                        player.duration = CMTimeGetSeconds(resolved)
-                        if CMTimeCompare(resolved, itemDuration) != 0 {
-                            item.forwardPlaybackEndTime = resolved
-                        }
+                        // Duration fix-up needs the audio track's timeRange, which
+                        // is a LOADABLE property: reading it synchronously blocks
+                        // the main thread on a network asset ("Main thread blocked
+                        // by synchronous property query on not-yet-loaded property
+                        // (TimeRange)"). Publish the container duration now so the
+                        // UI is correct immediately, then refine off-main.
+                        player.duration = CMTimeGetSeconds(itemDuration)
                         player.nowPlaying.updateNowPlaying()
+                        Task { [weak self] in
+                            guard let self else { return }
+                            await self.applyCorrectedDuration(for: item, container: itemDuration)
+                        }
                     }
                 }
             }
@@ -364,18 +360,41 @@ final class AVPlayerPath {
     /// 2× the actual track length (duplicate audio segments). The audio
     /// track's `timeRange` is authoritative, so prefer it when the item
     /// duration is suspiciously larger.
-    private func correctedDuration(for item: AVPlayerItem) -> CMTime {
-        let itemDur = item.duration
-        guard let trackDur = item.asset.tracks(withMediaType: .audio).first?.timeRange.duration,
-              trackDur.isNumeric, !trackDur.isIndefinite,
-              itemDur.isNumeric, !itemDur.isIndefinite else {
-            return itemDur
+    ///
+    /// Async: `timeRange` is a loadable property, and querying it synchronously
+    /// blocks the main thread on an HTTP asset. Loads off-main, then applies on
+    /// the main actor if the item is still current.
+    private func applyCorrectedDuration(for item: AVPlayerItem,
+                                        container itemDuration: CMTime) async {
+        var resolved = itemDuration
+
+        if let track = try? await item.asset.loadTracks(withMediaType: .audio).first,
+           let trackRange = try? await track.load(.timeRange) {
+            let trackDur = trackRange.duration
+            let itemSec = CMTimeGetSeconds(itemDuration)
+            let trackSec = CMTimeGetSeconds(trackDur)
+            if trackDur.isNumeric, !trackDur.isIndefinite,
+               itemSec > 0, trackSec > 0, itemSec / trackSec > 1.1 {
+                resolved = trackDur
+            }
         }
-        let itemSec = CMTimeGetSeconds(itemDur)
-        let trackSec = CMTimeGetSeconds(trackDur)
-        guard itemSec > 0, trackSec > 0, itemSec / trackSec > 1.1 else {
-            return itemDur
+
+        // The track-vs-container heuristic misses the case where BOTH are
+        // doubled (DASH song + equal silence). When the backend gave us the
+        // true length and the container is materially longer, trust the
+        // backend and cap there.
+        if let known = knownDuration, known > 0 {
+            let itemSec = CMTimeGetSeconds(itemDuration)
+            if itemSec > known * 1.1 {
+                resolved = CMTime(seconds: known, preferredTimescale: 600)
+            }
         }
-        return trackDur
+
+        // A newer item may have replaced this one while the track loaded.
+        guard playerItem === item, let player else { return }
+        guard CMTimeCompare(resolved, itemDuration) != 0 else { return }
+        player.duration = CMTimeGetSeconds(resolved)
+        item.forwardPlaybackEndTime = resolved
+        player.nowPlaying.updateNowPlaying()
     }
 }
