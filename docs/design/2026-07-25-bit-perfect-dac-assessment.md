@@ -105,7 +105,20 @@ the route, hardware disagrees) and playback simply continues — never a failure
 path. Covered by `Tests/OutputSampleRateTests.swift`, including a real-file
 format read.
 
-**Not device-verifiable here:** whether the session actually lands on the
-requested rate depends on hardware and route. Worth one check on a real device
-with a USB DAC (Console: `OutputSampleRate` category logs the requested vs
-resulting rate).
+### Field test, 2026-07-25 (iPhone 15 Pro + iBasso DC03 Pro over USB-C)
+
+The request fires correctly for a streamed track:
+
+    requested 44100.0 Hz for 44100.0 Hz source (was 48000.0 Hz)
+
+Two subsequent local files (an MP3 and a FLAC) logged nothing at all, which the
+first version of this code could not disambiguate: silence meant EITHER "already
+at the target rate" (the guard short-circuiting — i.e. the earlier request took
+effect) OR "the rate never changed". The no-op branch is now logged explicitly,
+so a follow-up run reads unambiguously.
+
+Also corrected: the original log re-read `session.sampleRate` immediately after
+`setPreferredSampleRate`, which reports the PRE-change value (the session
+applies a preferred rate on activation) and looked like a failure. It now logs
+the previous rate and states that confirmation comes from the next track's
+"already at" line.

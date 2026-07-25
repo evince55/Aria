@@ -68,12 +68,22 @@ enum OutputSampleRate {
     static func apply(forSource sourceRate: Double,
                       session: AVAudioSession = .sharedInstance()) {
         guard let target = preferredRate(forSource: sourceRate) else { return }
-        guard abs(session.sampleRate - target) > 1 else { return }  // already there
+        let current = session.sampleRate
+        guard abs(current - target) > 1 else {
+            // Logged (not silent) so field diagnosis can tell "already correct"
+            // apart from "never ran" — silence used to mean either.
+            log.notice("session already at \(target, privacy: .public) Hz for \(sourceRate, privacy: .public) Hz source — no change needed")
+            return
+        }
         do {
             try session.setPreferredSampleRate(target)
-            log.notice("requested \(target, privacy: .public) Hz for \(sourceRate, privacy: .public) Hz source (session now \(session.sampleRate, privacy: .public) Hz)")
+            // NOTE: the session applies a preferred rate on (re)activation, so
+            // re-reading `session.sampleRate` here would report the OLD value
+            // and look like a failure. Confirmation instead comes from the NEXT
+            // track in the same family logging "already at <target>".
+            log.notice("requested \(target, privacy: .public) Hz for \(sourceRate, privacy: .public) Hz source (was \(current, privacy: .public) Hz)")
         } catch {
-            log.debug("sample-rate request refused: \(error.localizedDescription, privacy: .public)")
+            log.error("sample-rate request refused: \(error.localizedDescription, privacy: .public)")
         }
     }
 }
