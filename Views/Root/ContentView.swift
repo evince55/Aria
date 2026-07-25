@@ -12,6 +12,7 @@ struct ContentView: View {
     @EnvironmentObject private var downloadManager: DownloadManager
     @EnvironmentObject private var eqController: EQController
     @EnvironmentObject private var smartPlaylistsManager: SmartPlaylistsManager
+    @EnvironmentObject private var savedEQProfilesManager: SavedEQProfilesManager
 
     @State private var selectedTab: AppTab
     @State private var showFullPlayer = false
@@ -163,6 +164,7 @@ struct ContentView: View {
         playerManager.flushPendingWrites()
         eqController.flushPendingWrites()
         smartPlaylistsManager.flushPendingWrites()
+        savedEQProfilesManager.flushPendingWrites()
     }
 
     /// Hides the error banner after a delay, then clears BOTH error sources.
