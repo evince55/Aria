@@ -8,9 +8,15 @@ struct LibraryView: View {
     @EnvironmentObject private var playlistsManager: PlaylistsManager
     @EnvironmentObject private var nav: NavigationCoordinator
     @EnvironmentObject private var downloadManager: DownloadManager
+    @EnvironmentObject private var proStore: ProStore
 
     @State private var isImporting = false
+    @State private var isImportingFolder = false
+    @State private var isImportingM3U = false
     @State private var importError: String?
+    @State private var importProgress: FolderImporter.Progress?
+    @State private var importSummary: String?
+    @State private var showPaywall = false
     @State private var addToPlaylistTrack: LocalTrack?
     @State private var selectedTab: LibraryTab = .offlineTracks
     @Namespace private var tabIndicator
@@ -98,12 +104,28 @@ struct LibraryView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        isImporting = true
+                    Menu {
+                        Button {
+                            isImporting = true
+                        } label: {
+                            Label("Import Files…", systemImage: "doc.badge.plus")
+                        }
+                        Button {
+                            if proStore.isPro { isImportingFolder = true } else { showPaywall = true }
+                        } label: {
+                            Label(proStore.isPro ? "Import Folder…" : "Import Folder… (Pro)",
+                                  systemImage: proStore.isPro ? "folder.badge.plus" : "lock.fill")
+                        }
+                        Button {
+                            if proStore.isPro { isImportingM3U = true } else { showPaywall = true }
+                        } label: {
+                            Label(proStore.isPro ? "Import M3U Playlist…" : "Import M3U Playlist… (Pro)",
+                                  systemImage: proStore.isPro ? "list.bullet.rectangle" : "lock.fill")
+                        }
                     } label: {
                         Image(systemName: "plus")
                     }
-                    .accessibilityLabel("Import audio file")
+                    .accessibilityLabel("Import audio")
                 }
             }
         }
@@ -118,6 +140,48 @@ struct LibraryView: View {
             case .failure(let error):
                 importError = error.localizedDescription
             }
+        }
+        .fileImporter(
+            isPresented: $isImportingFolder,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let folder = urls.first { Task { await importFolder(folder) } }
+            case .failure(let error):
+                importError = error.localizedDescription
+            }
+        }
+        .fileImporter(
+            isPresented: $isImportingM3U,
+            allowedContentTypes: [.m3uPlaylist, .plainText],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first { importM3U(url) }
+            case .failure(let error):
+                importError = error.localizedDescription
+            }
+        }
+        .sheet(isPresented: $showPaywall) {
+            AriaProView()
+        }
+        .overlay(alignment: .bottom) {
+            if let progress = importProgress {
+                importProgressBanner(progress)
+                    .padding(.bottom, 110)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .alert(
+            "Import",
+            isPresented: Binding(get: { importSummary != nil }, set: { if !$0 { importSummary = nil } })
+        ) {
+            Button("OK", role: .cancel) { importSummary = nil }
+        } message: {
+            Text(importSummary ?? "")
         }
         .alert(
             "Import failed",
@@ -426,6 +490,68 @@ struct LibraryView: View {
     }
 
     // MARK: - Actions
+
+    /// Bulk-imports a picked folder (recursively). Per-file failures are
+    /// counted as skipped rather than aborting — one unsupported file in a
+    /// 500-track folder must not kill the run.
+    private func importFolder(_ folder: URL) async {
+        let result = await FolderImporter.importAll(
+            from: folder,
+            importFile: { url in _ = try await libraryManager.importFile(at: url) },
+            onProgress: { progress in
+                withAnimation(.easeOut(duration: 0.15)) { importProgress = progress }
+            }
+        )
+        withAnimation { importProgress = nil }
+        Haptics.success()
+        importSummary = result.total == 0
+            ? "No audio files found in that folder."
+            : "Imported \(result.imported) of \(result.total) file\(result.total == 1 ? "" : "s")"
+                + (result.skipped > 0 ? " · \(result.skipped) skipped" : "") + "."
+    }
+
+    /// Imports an M3U/M3U8 playlist by matching its entries against the local
+    /// library (by file name, then title+artist) and creating a playlist from
+    /// whatever resolves.
+    private func importM3U(_ url: URL) {
+        let secured = url.startAccessingSecurityScopedResource()
+        defer { if secured { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let entries = try M3UPlaylist.parse(text)
+            let (tracks, unmatched) = M3UPlaylist.resolve(
+                entries: entries,
+                libraryTracks: libraryManager.tracks,
+                fileURL: { libraryManager.fileURL(for: $0) }
+            )
+            guard !tracks.isEmpty else {
+                importError = "None of the \(entries.count) entries matched tracks in your library. Import the audio files first, then import the playlist."
+                return
+            }
+            let name = url.deletingPathExtension().lastPathComponent
+            _ = playlistsManager.create(name: name, tracks: tracks)
+            Haptics.success()
+            importSummary = unmatched.isEmpty
+                ? "Created “\(name)” with \(tracks.count) track\(tracks.count == 1 ? "" : "s")."
+                : "Created “\(name)” with \(tracks.count) of \(entries.count) tracks. \(unmatched.count) not found in your library."
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
+
+    /// Live progress while a folder import runs.
+    private func importProgressBanner(_ progress: FolderImporter.Progress) -> some View {
+        HStack(spacing: DS.Spacing.sm) {
+            ProgressView()
+            Text("Importing \(progress.imported + progress.skipped) of \(progress.total)…")
+                .font(DS.Typography.caption)
+                .foregroundColor(tokens.textPrimary)
+        }
+        .padding(.horizontal, DS.Spacing.lg)
+        .padding(.vertical, DS.Spacing.sm)
+        .background(Capsule().fill(.ultraThinMaterial))
+        .softShadow()
+    }
 
     private func importURLs(_ urls: [URL]) async {
         // Collect every failure — overwriting one alert message per error
