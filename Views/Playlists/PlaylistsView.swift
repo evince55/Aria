@@ -6,8 +6,15 @@ struct PlaylistsView: View {
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
     @EnvironmentObject private var favoritesManager: FavoritesManager
     @EnvironmentObject private var themeManager: ThemeManager
+    @EnvironmentObject private var smartPlaylistsManager: SmartPlaylistsManager
+    @EnvironmentObject private var proStore: ProStore
 
     @State private var selectedTab: PlaylistTab = .recentlyAdded
+    @State private var smartEditorDraft: SmartPlaylist?
+    @State private var selectedSmart: SmartPlaylist?
+    @State private var showSmartPaywall = false
+    @State private var smartDeleteTarget: SmartPlaylist?
+    @State private var showSmartDeleteAlert = false
     @State private var showNewPlaylistAlert = false
     @State private var newPlaylistName = ""
     @State private var selectedPlaylist: Playlist?
@@ -45,6 +52,9 @@ struct PlaylistsView: View {
                     tabContent
                         .padding(.top, DS.Spacing.sm)
 
+                    smartPlaylistsSection
+                        .padding(.top, DS.Spacing.xl)
+
                     yourPlaylistsSection
                         .padding(.top, DS.Spacing.xl)
                 }
@@ -64,6 +74,27 @@ struct PlaylistsView: View {
         }
         .sheet(item: $selectedPlaylist) { playlist in
             PlaylistDetailView(playlist: playlist)
+        }
+        .sheet(item: $smartEditorDraft) { draft in
+            SmartPlaylistEditorView(draft: draft)
+        }
+        .sheet(item: $selectedSmart) { playlist in
+            SmartPlaylistDetailView(playlistID: playlist.id)
+        }
+        .sheet(isPresented: $showSmartPaywall) {
+            AriaProView()
+        }
+        .alert("Delete Smart Playlist", isPresented: $showSmartDeleteAlert) {
+            Button("Cancel", role: .cancel) { smartDeleteTarget = nil }
+            Button("Delete", role: .destructive) {
+                if let target = smartDeleteTarget {
+                    Haptics.warning()
+                    smartPlaylistsManager.delete(target)
+                }
+                smartDeleteTarget = nil
+            }
+        } message: {
+            Text("This deletes the rules for “\(smartDeleteTarget?.name ?? "")”. Your tracks are not affected.")
         }
         .alert("Rename Playlist", isPresented: $showRenameAlert) {
             TextField("Playlist name", text: $renameText)
@@ -326,6 +357,102 @@ struct PlaylistsView: View {
     }
 
     // MARK: - Your Playlists
+
+    // MARK: - Smart playlists (Pro)
+
+    /// Rule-based playlists that re-evaluate live. Creating/editing is a Pro
+    /// feature; viewing and playing existing ones is never locked.
+    private var smartPlaylistsSection: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+            SectionLabel(title: "Smart playlists", tokens: tokens)
+                .padding(.horizontal, DS.Spacing.lg)
+
+            VStack(spacing: 0) {
+                ForEach(smartPlaylistsManager.playlists) { playlist in
+                    Button {
+                        Haptics.light()
+                        selectedSmart = playlist
+                    } label: {
+                        HStack(spacing: DS.Spacing.md) {
+                            Image(systemName: "wand.and.stars")
+                                .foregroundColor(tokens.accent)
+                                .frame(width: 32, height: 32)
+                            Text(playlist.name)
+                                .font(DS.Typography.bodyEm)
+                                .foregroundColor(tokens.textPrimary)
+                                .lineLimit(1)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(tokens.textSecondary)
+                        }
+                        .padding(.horizontal, DS.Spacing.md)
+                        .padding(.vertical, DS.Spacing.sm)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button {
+                            if proStore.isPro {
+                                smartEditorDraft = playlist
+                            } else {
+                                showSmartPaywall = true
+                            }
+                        } label: {
+                            Label("Edit Rules", systemImage: "slider.horizontal.3")
+                        }
+                        Button(role: .destructive) {
+                            smartDeleteTarget = playlist
+                            showSmartDeleteAlert = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    Divider().background(tokens.hairline).padding(.leading, 56)
+                }
+
+                Button {
+                    Haptics.light()
+                    if proStore.isPro {
+                        smartEditorDraft = SmartPlaylist(name: "")
+                    } else {
+                        showSmartPaywall = true
+                    }
+                } label: {
+                    HStack(spacing: DS.Spacing.md) {
+                        Image(systemName: proStore.isPro ? "plus.circle.fill" : "lock.fill")
+                            .foregroundColor(tokens.accent)
+                            .frame(width: 32, height: 32)
+                        Text("New Smart Playlist")
+                            .font(DS.Typography.bodyEm)
+                            .foregroundColor(tokens.textPrimary)
+                        if !proStore.isPro {
+                            Text("PRO")
+                                .font(DS.Typography.micro)
+                                .fontWeight(.bold)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(tokens.accent))
+                                .foregroundColor(.white)
+                        }
+                        Spacer()
+                    }
+                    .padding(.horizontal, DS.Spacing.md)
+                    .padding(.vertical, DS.Spacing.sm)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(proStore.isPro
+                                    ? "New smart playlist"
+                                    : "New smart playlist, requires Aria Pro")
+            }
+            .background(
+                RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)
+                    .fill(tokens.surface)
+            )
+            .padding(.horizontal, DS.Spacing.lg)
+        }
+    }
 
     private var yourPlaylistsSection: some View {
         VStack(alignment: .leading, spacing: 0) {

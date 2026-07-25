@@ -17,6 +17,7 @@ struct AriaApp: App {
     @StateObject private var navigationCoordinator = NavigationCoordinator()
     @StateObject private var downloadManager = DownloadManager()
     @StateObject private var proStore = ProStore()
+    @StateObject private var smartPlaylistsManager = SmartPlaylistsManager(store: JSONFileStore(filename: "smart_playlists.json"))
 
     init() {
         do {
@@ -78,6 +79,7 @@ struct AriaApp: App {
                 .environmentObject(navigationCoordinator)
                 .environmentObject(downloadManager)
                 .environmentObject(proStore)
+                .environmentObject(smartPlaylistsManager)
                 .task { playerManager.warmUpBackend() }
         }
     }
