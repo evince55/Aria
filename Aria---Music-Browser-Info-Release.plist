@@ -33,6 +33,32 @@
 	     the tunnel URL via the in-app Settings → Backend override. -->
 	<key>ARIA_BACKEND_URL</key>
 	<string></string>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>public.m3u-playlist</string>
+			<key>UTTypeDescription</key>
+			<string>M3U Playlist</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.text</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>m3u</string>
+					<string>m3u8</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>audio/x-mpegurl</string>
+					<string>audio/mpegurl</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIBackgroundModes</key>
