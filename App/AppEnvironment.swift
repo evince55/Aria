@@ -62,6 +62,10 @@ private struct SmartPlaylistsManagerKey: EnvironmentKey {
     @MainActor static var defaultValue: SmartPlaylistsManager { SmartPlaylistsManager() }
 }
 
+private struct SavedEQProfilesManagerKey: EnvironmentKey {
+    @MainActor static var defaultValue: SavedEQProfilesManager { SavedEQProfilesManager() }
+}
+
 extension EnvironmentValues {
     var playerManager: PlayerManager {
         get { self[PlayerManagerKey.self] }
@@ -106,5 +110,9 @@ extension EnvironmentValues {
     var smartPlaylistsManager: SmartPlaylistsManager {
         get { self[SmartPlaylistsManagerKey.self] }
         set { self[SmartPlaylistsManagerKey.self] = newValue }
+    }
+    var savedEQProfilesManager: SavedEQProfilesManager {
+        get { self[SavedEQProfilesManagerKey.self] }
+        set { self[SavedEQProfilesManagerKey.self] = newValue }
     }
 }

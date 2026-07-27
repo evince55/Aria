@@ -2,7 +2,7 @@ import Foundation
 
 /// Filter shapes supported by the parametric EQ. Maps 1:1 onto AUNBandEQ
 /// filter types (`kAUNBandEQFilterType_Parametric` / `_LowShelf` / `_HighShelf`).
-enum ParametricFilterType: String, Codable, Equatable {
+enum ParametricFilterType: String, Codable, Hashable {
     case peak
     case lowShelf
     case highShelf
@@ -11,7 +11,7 @@ enum ParametricFilterType: String, Codable, Equatable {
 /// One parametric band: a filter shape at a centre/corner frequency with a
 /// gain and a Q. Q is the user-facing width unit (what AutoEQ profiles use);
 /// AUNBandEQ wants bandwidth in octaves — see `bandwidthOctaves`.
-struct ParametricBand: Codable, Equatable {
+struct ParametricBand: Codable, Hashable {
     let type: ParametricFilterType
     let frequency: Float
     let gain: Float
@@ -28,7 +28,7 @@ struct ParametricBand: Codable, Equatable {
 /// A named parametric curve — typically an imported AutoEQ correction profile
 /// for a specific headphone. `preamp` is the global gain (dB) applied so
 /// boosted bands don't clip.
-struct ParametricEQPreset: Codable, Equatable {
+struct ParametricEQPreset: Codable, Hashable {
     let name: String
     let preamp: Float
     let bands: [ParametricBand]

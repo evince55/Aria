@@ -18,6 +18,7 @@ struct AriaApp: App {
     @StateObject private var downloadManager = DownloadManager()
     @StateObject private var proStore = ProStore()
     @StateObject private var smartPlaylistsManager = SmartPlaylistsManager(store: JSONFileStore(filename: "smart_playlists.json"))
+    @StateObject private var savedEQProfilesManager = SavedEQProfilesManager(store: JSONFileStore(filename: "eq_profiles.json"))
 
     init() {
         do {
@@ -80,6 +81,7 @@ struct AriaApp: App {
                 .environmentObject(downloadManager)
                 .environmentObject(proStore)
                 .environmentObject(smartPlaylistsManager)
+                .environmentObject(savedEQProfilesManager)
                 .task { playerManager.warmUpBackend() }
         }
     }

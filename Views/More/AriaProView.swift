@@ -79,14 +79,14 @@ struct AriaProView: View {
 
     private var featureList: some View {
         VStack(spacing: 0) {
-            featureRow(icon: "slider.vertical.3", title: "Parametric EQ + AutoEQ import",
-                       detail: "Coming soon — correction curves for your exact headphones")
+            featureRow(icon: "slider.vertical.3", title: "Parametric EQ + AutoEQ",
+                       detail: "8,850 headphone correction curves, applied live — and kept in your profile library")
             Divider().background(tokens.hairline).padding(.leading, 56)
             featureRow(icon: "wand.and.stars", title: "Smart playlists",
-                       detail: "Coming soon — rule-based playlists that build themselves")
+                       detail: "Rule-based playlists that keep themselves current")
             Divider().background(tokens.hairline).padding(.leading, 56)
-            featureRow(icon: "square.and.arrow.down.on.square", title: "M3U import & export",
-                       detail: "Coming soon — move playlists in and out freely")
+            featureRow(icon: "square.and.arrow.down.on.square", title: "Folder & M3U import/export",
+                       detail: "Bulk-import a whole folder; move playlists in and out freely")
             Divider().background(tokens.hairline).padding(.leading, 56)
             featureRow(icon: "heart.fill", title: "Support independent development",
                        detail: "Pro purchases fund every free feature too")

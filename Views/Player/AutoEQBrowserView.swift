@@ -5,6 +5,9 @@ import SwiftUI
 /// profile's tiny ParametricEQ.txt from the AutoEq repo and hands the parsed
 /// preset back via `onApply`.
 struct AutoEQBrowserView: View {
+    /// Name of the curve already applied, so the matching row can be marked
+    /// (the sheet is reachable while a profile is active).
+    var activeProfileName: String?
     /// Called with the fetched, parsed preset; the caller applies it.
     let onApply: (ParametricEQPreset) -> Void
     /// Called when the user prefers a local file (offline / custom profile).
@@ -142,6 +145,9 @@ struct AutoEQBrowserView: View {
                 Spacer()
                 if fetchingID == entry.id {
                     ProgressView()
+                } else if entry.name == activeProfileName {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(tokens.accent)
                 } else {
                     Image(systemName: "arrow.down.circle")
                         .foregroundColor(tokens.accent)

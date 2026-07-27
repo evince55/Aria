@@ -6,6 +6,7 @@ struct EqualizerView: View {
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var eq: EQController
     @EnvironmentObject private var proStore: ProStore
+    @EnvironmentObject private var savedProfiles: SavedEQProfilesManager
     @Environment(\.dismiss) private var dismiss
 
     @StateObject private var state: EqualizerState
@@ -39,6 +40,11 @@ struct EqualizerView: View {
                         presetsBar
                         eqGrid
                             .frame(maxHeight: .infinity)
+                        // Saved headphone profiles are reachable from the
+                        // graphic screen too — switching to one is how you get
+                        // back into parametric mode after removing a profile.
+                        savedProfilesSection(active: nil)
+                            .padding(.horizontal, DS.Spacing.lg)
                         autoEQRow
                         resetButton
                             .padding(.bottom, DS.Spacing.xl)
@@ -93,7 +99,8 @@ struct EqualizerView: View {
             }
         }) {
             AutoEQBrowserView(
-                onApply: { playerManager.applyParametricEQ($0) },
+                activeProfileName: eq.parametric?.name,
+                onApply: { applyProfile($0) },
                 onImportFile: { pendingFileImport = true }
             )
         }
@@ -314,6 +321,10 @@ struct EqualizerView: View {
                         .fill(themeManager.surface)
                 )
 
+                savedProfilesSection(active: preset)
+
+                autoEQRow
+
                 Text("Parametric curve active — the graphic faders and presets are dormant until you remove it.")
                     .font(DS.Typography.micro)
                     .foregroundColor(themeManager.textSecondary)
@@ -336,6 +347,61 @@ struct EqualizerView: View {
                 .padding(.bottom, DS.Spacing.xl)
             }
             .padding(.horizontal, DS.Spacing.lg)
+        }
+    }
+
+    /// The user's headphone library: tap to switch curves without re-fetching.
+    /// `active` is highlighted (and re-tapping it is a no-op).
+    @ViewBuilder
+    private func savedProfilesSection(active: ParametricEQPreset?) -> some View {
+        if !savedProfiles.profiles.isEmpty {
+            VStack(alignment: .leading, spacing: DS.Spacing.sm) {
+                Text("Your headphones")
+                    .font(DS.Typography.sectionHeader)
+                    .foregroundColor(themeManager.textSecondary)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: DS.Spacing.sm) {
+                        ForEach(savedProfiles.profiles) { profile in
+                            let isActive = profile.preset == active
+                            Button {
+                                guard !isActive else { return }
+                                Haptics.medium()
+                                applyProfile(profile.preset)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if isActive {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 10, weight: .bold))
+                                    }
+                                    Text(profile.name)
+                                        .font(DS.Typography.captionStrong)
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, DS.Spacing.md)
+                                .padding(.vertical, DS.Spacing.sm)
+                                .background(isActive
+                                            ? themeManager.theme.accentColor
+                                            : themeManager.surface)
+                                .foregroundColor(isActive ? .white : themeManager.textPrimary)
+                                .cornerRadius(DS.Radius.lg)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    Haptics.warning()
+                                    savedProfiles.delete(profile)
+                                } label: {
+                                    Label("Remove from Your Headphones", systemImage: "trash")
+                                }
+                            }
+                            .accessibilityLabel(isActive
+                                                ? "\(profile.name), active profile"
+                                                : "Switch to \(profile.name)")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -386,10 +452,17 @@ struct EqualizerView: View {
             let name = url.deletingPathExtension().lastPathComponent
             let preset = try AutoEQParser.parse(text, name: name)
             Haptics.medium()
-            playerManager.applyParametricEQ(preset)
+            applyProfile(preset)
         } catch {
             importError = error.localizedDescription
         }
+    }
+
+    /// Applies a curve and remembers it, so every profile the user actually
+    /// uses lands in their library and switching back later is one tap.
+    private func applyProfile(_ preset: ParametricEQPreset) {
+        playerManager.applyParametricEQ(preset)
+        savedProfiles.remember(preset)
     }
 
     private func frequencyLabel(_ index: Int) -> String {
