@@ -28,9 +28,14 @@ The backend is **not** packaged — deploy is a file copy plus a service restart
 
 ```bash
 scp ~/MusicAppIOS/Aria_Music_Browser/backend/app.py \
-    eugene@100.76.103.1:~/MusicAppIOS/backend/app.py
+    ~/MusicAppIOS/Aria_Music_Browser/backend/library_index.py \
+    eugene@100.76.103.1:~/MusicAppIOS/backend/
 ssh eugene@100.76.103.1 "sudo systemctl restart aria-backend"
 ```
+
+> `library_index.py` (the "Ask Your Library" search index) ships **alongside**
+> `app.py` — `app.py` imports it at startup, so deploying one without the
+> other crashes the service on restart.
 
 > **Deploy from the REPO copy (`Aria_Music_Browser/backend/app.py`), never from
 > the old `~/MusicAppIOS/backend/app.py`.** That untracked root copy is
@@ -55,6 +60,9 @@ ssh eugene@100.76.103.1 "sudo systemctl restart aria-backend"
 | `GET /api/stream/{file}` | Serve a cached file (Range-enabled)             |
 | `GET /api/radio`    | YouTube Mix (RD<seed>) related tracks                |
 | `DELETE /api/cache` | Wipe the cache (auth-gated)                          |
+| `POST /api/library/sync` | Delta-sync a device's library into the search index |
+| `GET /api/library/query` | BM25 top-k over the device's library (`mode: lexical`) |
+| `DELETE /api/library` | Drop all indexed rows for a device (privacy delete) |
 | `GET /api/health`   | Status, versions, cache stats, error rate            |
 | `GET /api/metrics`  | Per-endpoint p50/p95 latency, failure-by-reason       |
 

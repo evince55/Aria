@@ -12,7 +12,10 @@ Environment=MAX_CACHE_GB=5
 Environment=CACHE_EVICT_GRACE_SECONDS=300
 # Free the ports if a previous instance didn't exit cleanly, then start.
 ExecStartPre=/bin/sh -c "for p in $(fuser 8000/tcp 8443/tcp 2>/dev/null); do kill -9 $p; done; sleep 1"
-ExecStart=/home/eugene/MusicAppIOS/backend/.venv/bin/python3 -m uvicorn app:app --host 0.0.0.0 --port 8000
+# --no-access-log: uvicorn's access line includes the full query string, which
+# would leak /api/library/query?q=... (personal library queries) into journald.
+# The app's own observability middleware logs every request path-only instead.
+ExecStart=/home/eugene/MusicAppIOS/backend/.venv/bin/python3 -m uvicorn app:app --host 0.0.0.0 --port 8000 --no-access-log
 Restart=always
 RestartSec=10
 StandardOutput=journal

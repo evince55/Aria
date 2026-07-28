@@ -19,3 +19,9 @@ xcuserdata/
 LocalLibraryManager.sampleData/*
 !LocalLibraryManager.sampleData/.gitkeep
 !LocalLibraryManager.sampleData/README.md
+
+# Library search index runtime artifacts (SQLite + WAL sidecars) — created
+# next to song_cache/ by the backend at runtime, never committed.
+backend/library_index.db
+backend/library_index.db-wal
+backend/library_index.db-shm

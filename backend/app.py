@@ -19,6 +19,8 @@ from fastapi.responses import FileResponse, JSONResponse
 import yt_dlp
 from yt_dlp.utils import match_filter_func
 
+import library_index as libindex
+
 # ---------------------------------------------------------------------------
 # Structured logging
 # ---------------------------------------------------------------------------
@@ -64,6 +66,7 @@ RATE_LIMIT_PLAY_PER_MIN = int(os.environ.get("RATE_LIMIT_PLAY_PER_MIN", "60"))
 RATE_LIMIT_SEARCH_PER_MIN = int(os.environ.get("RATE_LIMIT_SEARCH_PER_MIN", "30"))
 RATE_LIMIT_CACHE_PER_MIN = int(os.environ.get("RATE_LIMIT_CACHE_PER_MIN", "5"))
 RATE_LIMIT_COVER_PER_MIN = int(os.environ.get("RATE_LIMIT_COVER_PER_MIN", "30"))
+RATE_LIMIT_LIBRARY_PER_MIN = int(os.environ.get("RATE_LIMIT_LIBRARY_PER_MIN", "30"))
 # Cap on distinct rate-limit keys held in memory. Without this the per-IP
 # request log is an unbounded dict — a stream of distinct (or spoofed) client
 # IPs grows it without limit (memory-exhaustion DoS). Evicted oldest-first.
@@ -82,6 +85,35 @@ ARIA_API_KEY: str = os.environ.get("ARIA_API_KEY", "")
 
 # youtube video IDs are exactly 11 URL-safe base64 characters.
 _VIDEO_ID_RE = re.compile(r'^[A-Za-z0-9_-]{11}$')
+
+# ---------------------------------------------------------------------------
+# Library search index ("Ask Your Library", lexical slice)
+# ---------------------------------------------------------------------------
+# Lives next to song_cache/ per the RAG spec; env-overridable so a test or a
+# non-default deployment can relocate it. The LibraryIndex singleton is lazy so
+# importing app.py never touches the filesystem.
+LIBRARY_DB_PATH = Path(os.environ.get("ARIA_LIBRARY_DB", "./library_index.db"))
+# Byte cap on the sync payload, checked against the raw request body BEFORE
+# JSON parsing so an oversized payload never costs a full parse.
+MAX_SYNC_BYTES = int(os.environ.get("LIBRARY_SYNC_MAX_BYTES",
+                                    str(libindex.MAX_SYNC_BYTES)))
+
+_library_index: Optional[libindex.LibraryIndex] = None
+
+
+def _get_library_index() -> libindex.LibraryIndex:
+    global _library_index
+    if _library_index is None:
+        _library_index = libindex.LibraryIndex(LIBRARY_DB_PATH)
+    return _library_index
+
+
+def _reset_library_index() -> None:
+    """Test hook — close and drop the singleton so a new DB path takes."""
+    global _library_index
+    if _library_index is not None:
+        _library_index.close()
+    _library_index = None
 
 # yt-dlp player clients tried in order. android_vr is fastest when it works;
 # fallbacks kick in automatically when YouTube breaks a client.
@@ -1275,6 +1307,86 @@ async def clear_cache(request: Request, _auth: None = Depends(_require_api_key))
     return {"deleted": count}
 
 
+# ---------------------------------------------------------------------------
+# Library search index endpoints ("Ask Your Library", Slice 1: lexical only)
+# ---------------------------------------------------------------------------
+# Handlers stay thin: validation caps + guardrails here, all index logic in
+# library_index.py. Logging guardrail (spec §3.4): raw query text and doc_text
+# are personal data — only lengths/counts/latency/mode are ever logged (the
+# observability middleware logs the path, not the query string).
+
+
+@app.post("/api/library/sync")
+async def library_sync(request: Request, _auth: None = Depends(_require_api_key)):
+    """Delta-sync a device's library snapshot into the search index.
+
+    Body: {device_id, tracks: [{track_id, doc_hash?, title, artist, album,
+    genre, duration, playlists, affinity}], deleted_track_ids: [...]}.
+    Only rows whose doc_hash changed are re-indexed. Returns
+    {indexed, skipped, deleted, pending_embeddings}."""
+    _enforce_rate_limit(request, "library", RATE_LIMIT_LIBRARY_PER_MIN)
+    body = await request.body()
+    if len(body) > MAX_SYNC_BYTES:
+        raise HTTPException(status_code=413,
+                            detail=f"Payload exceeds {MAX_SYNC_BYTES} bytes")
+    try:
+        payload = json.loads(body)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body must be valid JSON")
+    try:
+        device_id, tracks, deleted_ids = libindex.parse_sync_payload(payload)
+    except libindex.PayloadTooLarge as e:
+        raise HTTPException(status_code=413, detail=str(e))
+    except libindex.InvalidPayload as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # The sync writes to disk — same guard as downloads (spec §9: abuse surface).
+    _check_disk_space(len(body))
+    return _get_library_index().sync(device_id, tracks, deleted_ids)
+
+
+@app.get("/api/library/query")
+async def library_query(
+    request: Request,
+    device_id: str = Query(..., description="Client-generated device UUID"),
+    q: str = Query(..., description="Natural-language library query"),
+    k: int = Query(25, ge=1, le=100, description="Max results"),
+    _auth: None = Depends(_require_api_key),
+):
+    """BM25 top-k over the device's indexed library. FTS5 query syntax in `q`
+    is escaped (injection surface), and this slice is lexical-only:
+    {"results": [{track_id, score, matched: "lexical"}], "mode": "lexical"}."""
+    _enforce_rate_limit(request, "library", RATE_LIMIT_LIBRARY_PER_MIN)
+    try:
+        libindex.validate_device_id(device_id)
+    except libindex.InvalidPayload as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    query_text = q.strip()[:MAX_QUERY_LEN]
+    start = time.perf_counter()
+    results = _get_library_index().query(device_id, query_text, k)
+    latency_ms = (time.perf_counter() - start) * 1000
+    logger.info(
+        "library query device=%s… qlen=%d k=%d mode=lexical results=%d (%.0fms)",
+        device_id[:8], len(query_text), k, len(results), latency_ms,
+    )
+    return {"results": results, "mode": "lexical"}
+
+
+@app.delete("/api/library")
+async def library_delete(
+    request: Request,
+    device_id: str = Query(..., description="Client-generated device UUID"),
+    _auth: None = Depends(_require_api_key),
+):
+    """Drop every indexed row for a device — the privacy delete. Wired by the
+    client to the backend-URL-change / sign-out flow."""
+    _enforce_rate_limit(request, "library", RATE_LIMIT_LIBRARY_PER_MIN)
+    try:
+        libindex.validate_device_id(device_id)
+    except libindex.InvalidPayload as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"deleted": _get_library_index().delete_device(device_id)}
+
+
 @app.get("/api/health")
 async def health():
     """Health check, cache stats, dependency versions, and error rate.
@@ -1298,6 +1410,11 @@ async def health():
         "total_requests": total,
         "total_errors": errors,
         "error_rate": round(errors / total, 4) if total else 0.0,
+        "library_index": {
+            "tracks": _get_library_index().track_count(),
+            # Slice 2 replaces the constant with a live "ok"|"down" probe.
+            "embedder": libindex.EMBEDDER_STATUS,
+        },
     }
 
 
