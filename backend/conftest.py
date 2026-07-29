@@ -19,10 +19,15 @@ import app as appmod  # noqa: E402
 @pytest.fixture
 def cache_dir(tmp_path, monkeypatch):
     """Redirect the module-level cache dir at a fresh temp path and reset all
-    in-process state (metrics, rate-limit log, LRU table, byte counter)."""
+    in-process state (metrics, rate-limit log, LRU table, byte counter,
+    library index)."""
     d = tmp_path / "song_cache"
     d.mkdir()
     monkeypatch.setattr(appmod, "CACHE_DIR", d)
+    # Point the library index at a throwaway DB so tests never touch (or
+    # create) a real ./library_index.db, and reset the lazy singleton.
+    monkeypatch.setattr(appmod, "LIBRARY_DB_PATH", tmp_path / "library_index.db")
+    appmod._reset_library_index()
     appmod._total_cache_bytes = 0
     appmod._stream_access_times.clear()
     appmod._request_log.clear()
@@ -31,7 +36,8 @@ def cache_dir(tmp_path, monkeypatch):
     appmod._resolve_cache.clear()
     appmod._cover_cache.clear()
     appmod._reset_metrics()
-    return d
+    yield d
+    appmod._reset_library_index()
 
 
 @pytest.fixture

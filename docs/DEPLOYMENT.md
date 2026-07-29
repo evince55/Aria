@@ -139,7 +139,9 @@ after a normal review pass. TestFlight (A2) remains the zero-drama option.
 ## Backend ops (both avenues)
 
 - Runbook: [`backend/README.md`](../backend/README.md) — deploy is
-  `scp backend/app.py` to the host + `systemctl restart aria-backend`.
+  `scp backend/app.py backend/library_index.py` to the host +
+  `systemctl restart aria-backend` (both files, always — `app.py` imports
+  `library_index.py`).
 - **Auth:** set `ARIA_API_KEY` in the backend env; clients send it as
   `X-API-Key` (plist or in-app setting). Without it, all endpoints —
   including `DELETE /api/cache` — are anonymous.
