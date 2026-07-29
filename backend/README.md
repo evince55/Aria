@@ -60,11 +60,34 @@ ssh eugene@100.76.103.1 "sudo systemctl restart aria-backend"
 | `GET /api/stream/{file}` | Serve a cached file (Range-enabled)             |
 | `GET /api/radio`    | YouTube Mix (RD<seed>) related tracks                |
 | `DELETE /api/cache` | Wipe the cache (auth-gated)                          |
-| `POST /api/library/sync` | Delta-sync a device's library into the search index |
-| `GET /api/library/query` | BM25 top-k over the device's library (`mode: lexical`) |
+| `POST /api/library/sync` | Delta-sync a device's library into the search index (embeds new/changed docs) |
+| `GET /api/library/query` | Hybrid BM25+vector top-k over the device's library (`mode: hybrid`, degrades to `lexical`) |
 | `DELETE /api/library` | Drop all indexed rows for a device (privacy delete) |
 | `GET /api/health`   | Status, versions, cache stats, error rate            |
 | `GET /api/metrics`  | Per-endpoint p50/p95 latency, failure-by-reason       |
+
+## Library semantic search (RAG Slice 2)
+
+`/api/library/query` fuses FTS5 BM25 with sqlite-vec cosine KNN (RRF, k=60)
+over 768-dim `nomic-embed-text-v1.5` embeddings served by llama-swap.
+
+- **New Python dependency: `sqlite-vec`** (pinned in `requirements.txt`). On
+  the homelab, re-run `pip install -r requirements.txt` in the backend venv as
+  part of the deploy — without it (or if the extension fails to load) the
+  server still runs and every query degrades to BM25-only (`mode: "lexical"`).
+- **`ARIA_EMBED_URL`** (env) — OpenAI-format `/v1/embeddings` endpoint.
+  Default `http://127.0.0.1:8090/v1/embeddings`; the homelab llama-swap fronts
+  **:8080**, so the systemd unit sets
+  `ARIA_EMBED_URL=http://127.0.0.1:8080/v1/embeddings`.
+- The `nomic-embed` model alias must be registered in the **llama-swap config**
+  (`tools/llmops` repo, `deploy/llama-swap/` — see the aria-llmops
+  `feat/nomic-embed-model` PR) and its GGUF downloaded on the homelab.
+- **Degradation contract:** embedder unreachable → queries answer BM25-only
+  with `mode: "lexical"`, syncs mark rows `needs_embedding` for later backfill
+  (next sync, or query-time backfill hard-capped at 128 rows/request). A
+  sleeping GPU box never fails a request.
+- `/api/health` reports `library_index.embedder: "ok"|"down"` via a cheap
+  probe of the embed server's `/v1/models` route, cached ~30 s.
 
 ## Observability (LLMOps)
 
