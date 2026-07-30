@@ -10,10 +10,13 @@ User=eugene
 WorkingDirectory=/home/eugene/MusicAppIOS/backend
 Environment=MAX_CACHE_GB=5
 Environment=CACHE_EVICT_GRACE_SECONDS=300
-# Library semantic search: llama-swap fronts :8080 on this host and serves the
-# "nomic-embed" alias (see tools/llmops deploy/llama-swap). If the endpoint is
-# down or unset, library queries degrade to BM25-only — never an outage.
-Environment=ARIA_EMBED_URL=http://127.0.0.1:8080/v1/embeddings
+# Library semantic search: the "nomic-embed" alias is served by llama-swap on
+# the WINDOWS GPU box, not this host (see tools/llmops deploy/llama-swap).
+# 192.0.2.2 is a placeholder (repo policy: no real tailnet IPs in git) —
+# replace it with the Windows box's Tailscale IP at deploy time. That box
+# sleeps: while it's down, library queries degrade to BM25-only — never an
+# outage.
+Environment=ARIA_EMBED_URL=http://192.0.2.2:8080/v1/embeddings
 # Free the ports if a previous instance didn't exit cleanly, then start.
 ExecStartPre=/bin/sh -c "for p in $(fuser 8000/tcp 8443/tcp 2>/dev/null); do kill -9 $p; done; sleep 1"
 # --no-access-log: uvicorn's access line includes the full query string, which

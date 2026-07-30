@@ -142,13 +142,20 @@ after a normal review pass. TestFlight (A2) remains the zero-drama option.
   `scp backend/app.py backend/library_index.py` to the host +
   `systemctl restart aria-backend` (both files, always — `app.py` imports
   `library_index.py`).
-- **Library semantic search (RAG Slice 2)** needs, on the homelab:
-  `pip install -r requirements.txt` in the backend venv (**new dep:
-  `sqlite-vec`**), `ARIA_EMBED_URL` in the backend env
-  (`http://127.0.0.1:8080/v1/embeddings` — llama-swap fronts :8080; the
-  updated `aria-backend.service` sets it), and the `nomic-embed` model
-  registered in llama-swap with the `nomic-embed-text-v1.5` GGUF on disk (see
-  the aria-llmops `feat/nomic-embed-model` PR). If any piece is missing the
+- **Library semantic search (RAG Slice 2)** needs two hosts:
+  - *Linux homelab (backend):* `pip install -r requirements.txt` in the
+    backend venv (**new dep: `sqlite-vec`**), and `ARIA_EMBED_URL` in the
+    backend env pointing at the Windows box's llama-swap
+    (`http://<windows-tailscale-ip>:8080/v1/embeddings`; the unit file
+    commits the `192.0.2.2` placeholder — swap in the real IP at deploy time,
+    same policy as the iOS plist).
+  - *Windows GPU box (embedder):* the `nomic-embed` model registered in
+    llama-swap with the `nomic-embed-text-v1.5` GGUF on disk (see the
+    aria-llmops `feat/nomic-embed-model` PR). llama-swap must listen on the
+    Tailscale interface (not just localhost) and Windows Firewall must allow
+    inbound :8080 from the tailnet.
+
+  The Windows box sleeps; while it's down (or if any piece is missing) the
   feature degrades to BM25-only — it never breaks the service.
 - **Auth:** set `ARIA_API_KEY` in the backend env; clients send it as
   `X-API-Key` (plist or in-app setting). Without it, all endpoints —

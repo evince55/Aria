@@ -76,12 +76,15 @@ over 768-dim `nomic-embed-text-v1.5` embeddings served by llama-swap.
   part of the deploy — without it (or if the extension fails to load) the
   server still runs and every query degrades to BM25-only (`mode: "lexical"`).
 - **`ARIA_EMBED_URL`** (env) — OpenAI-format `/v1/embeddings` endpoint.
-  Default `http://127.0.0.1:8090/v1/embeddings`; the homelab llama-swap fronts
-  **:8080**, so the systemd unit sets
-  `ARIA_EMBED_URL=http://127.0.0.1:8080/v1/embeddings`.
-- The `nomic-embed` model alias must be registered in the **llama-swap config**
-  (`tools/llmops` repo, `deploy/llama-swap/` — see the aria-llmops
-  `feat/nomic-embed-model` PR) and its GGUF downloaded on the homelab.
+  Default `http://127.0.0.1:8090/v1/embeddings`; the real llama-swap runs on
+  the **Windows GPU box** and fronts **:8080**, so the systemd unit sets
+  `ARIA_EMBED_URL=http://192.0.2.2:8080/v1/embeddings` (placeholder — swap in
+  the Windows box's Tailscale IP at deploy time; no real tailnet IPs in git).
+- The `nomic-embed` model alias must be registered in the **llama-swap config
+  on the Windows box** (`tools/llmops` repo, `deploy/llama-swap/` — see the
+  aria-llmops `feat/nomic-embed-model` PR) with its GGUF downloaded there,
+  llama-swap bound beyond localhost and Windows Firewall allowing inbound
+  :8080 from the tailnet. That box sleeps — see the degradation contract.
 - **Degradation contract:** embedder unreachable → queries answer BM25-only
   with `mode: "lexical"`, syncs mark rows `needs_embedding` for later backfill
   (next sync, or query-time backfill hard-capped at 128 rows/request). A
