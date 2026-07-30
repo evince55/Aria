@@ -13,6 +13,7 @@ struct ContentView: View {
     @EnvironmentObject private var eqController: EQController
     @EnvironmentObject private var smartPlaylistsManager: SmartPlaylistsManager
     @EnvironmentObject private var savedEQProfilesManager: SavedEQProfilesManager
+    @EnvironmentObject private var librarySearchManager: LibrarySearchManager
 
     @State private var selectedTab: AppTab
     @State private var showFullPlayer = false
@@ -130,6 +131,9 @@ struct ContentView: View {
                 flushAllStores()
             } else if newPhase == .active {
                 localLibraryManager.cleanupOrphans()
+                // Library search: probe /api/health for the scope gate and
+                // request a (debounced, min-interval-gated) snapshot sync.
+                librarySearchManager.appDidBecomeActive()
             }
         }
         .onReceive(NotificationCenter.default.publisher(
@@ -143,6 +147,14 @@ struct ContentView: View {
             // Connect favorites so the lock-screen Like command works.
             playerManager.configureFavorites(favoritesManager)
             playerManager.configureDownloads(downloadManager)
+            librarySearchManager.configure(
+                favorites: favoritesManager,
+                playlists: playlistsManager,
+                localLibrary: localLibraryManager,
+                recents: recentlyPlayedManager,
+                settings: settingsManager
+            )
+            librarySearchManager.appDidBecomeActive()
             if ProcessInfo.processInfo.arguments.contains("--debug-fake-track")
                 || UserDefaults.standard.bool(forKey: "debug_fake_track") {
                 playerManager.loadDebugFakeTrack()
@@ -165,6 +177,7 @@ struct ContentView: View {
         eqController.flushPendingWrites()
         smartPlaylistsManager.flushPendingWrites()
         savedEQProfilesManager.flushPendingWrites()
+        librarySearchManager.flushPendingWrites()
     }
 
     /// Hides the error banner after a delay, then clears BOTH error sources.

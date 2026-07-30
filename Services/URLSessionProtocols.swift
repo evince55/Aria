@@ -39,6 +39,24 @@ extension URLRequest {
         }
         return request
     }
+
+    /// A JSON POST to `url` carrying `body` and the `X-API-Key` header when
+    /// configured. Used by `LibrarySyncService` for `/api/library/sync`.
+    static func backendPOST(_ url: URL, jsonBody: Data, apiKey: String?) -> URLRequest {
+        var request = backendGET(url, apiKey: apiKey)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = jsonBody
+        return request
+    }
+
+    /// A DELETE to `url` carrying the `X-API-Key` header when configured.
+    /// Used for the `/api/library` privacy delete on backend-URL change.
+    static func backendDELETE(_ url: URL, apiKey: String?) -> URLRequest {
+        var request = backendGET(url, apiKey: apiKey)
+        request.httpMethod = "DELETE"
+        return request
+    }
 }
 
 protocol URLSessionDataTaskProtocol: AnyObject {
