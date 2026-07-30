@@ -100,6 +100,13 @@ MAX_SYNC_BYTES = int(os.environ.get("LIBRARY_SYNC_MAX_BYTES",
 
 _library_index: Optional[libindex.LibraryIndex] = None
 
+# Embedding client (RAG Slice 2). Endpoint comes from env ARIA_EMBED_URL
+# (default http://127.0.0.1:8090/v1/embeddings — llama-swap serving the
+# "nomic-embed" alias; on the homelab llama-swap fronts :8080, so the unit
+# file sets ARIA_EMBED_URL explicitly). Lazy for the same reason as the
+# index: importing app.py must never touch the network.
+_embedder: Optional[libindex.Embedder] = None
+
 
 def _get_library_index() -> libindex.LibraryIndex:
     global _library_index
@@ -114,6 +121,19 @@ def _reset_library_index() -> None:
     if _library_index is not None:
         _library_index.close()
     _library_index = None
+
+
+def _get_embedder() -> libindex.Embedder:
+    global _embedder
+    if _embedder is None:
+        _embedder = libindex.Embedder()
+    return _embedder
+
+
+def _reset_embedder() -> None:
+    """Test hook — drop the singleton so env/URL overrides take."""
+    global _embedder
+    _embedder = None
 
 # yt-dlp player clients tried in order. android_vr is fastest when it works;
 # fallbacks kick in automatically when YouTube breaks a client.
@@ -1341,7 +1361,8 @@ async def library_sync(request: Request, _auth: None = Depends(_require_api_key)
         raise HTTPException(status_code=400, detail=str(e))
     # The sync writes to disk — same guard as downloads (spec §9: abuse surface).
     _check_disk_space(len(body))
-    return _get_library_index().sync(device_id, tracks, deleted_ids)
+    return _get_library_index().sync(device_id, tracks, deleted_ids,
+                                     embedder=_get_embedder())
 
 
 @app.get("/api/library/query")
@@ -1352,9 +1373,12 @@ async def library_query(
     k: int = Query(25, ge=1, le=100, description="Max results"),
     _auth: None = Depends(_require_api_key),
 ):
-    """BM25 top-k over the device's indexed library. FTS5 query syntax in `q`
-    is escaped (injection surface), and this slice is lexical-only:
-    {"results": [{track_id, score, matched: "lexical"}], "mode": "lexical"}."""
+    """Hybrid retrieval over the device's indexed library: BM25 top-50 +
+    sqlite-vec cosine top-50 → RRF fusion → top-k, each hit labelled
+    matched: "lexical"|"vector"|"both". Serves BM25-only (mode "lexical")
+    when the embedder is down or sqlite-vec is unavailable — the query never
+    fails because the GPU box is asleep. FTS5 query syntax in `q` is escaped
+    (injection surface)."""
     _enforce_rate_limit(request, "library", RATE_LIMIT_LIBRARY_PER_MIN)
     try:
         libindex.validate_device_id(device_id)
@@ -1362,13 +1386,15 @@ async def library_query(
         raise HTTPException(status_code=400, detail=str(e))
     query_text = q.strip()[:MAX_QUERY_LEN]
     start = time.perf_counter()
-    results = _get_library_index().query(device_id, query_text, k)
+    out = _get_library_index().query(device_id, query_text, k,
+                                     embedder=_get_embedder())
     latency_ms = (time.perf_counter() - start) * 1000
     logger.info(
-        "library query device=%s… qlen=%d k=%d mode=lexical results=%d (%.0fms)",
-        device_id[:8], len(query_text), k, len(results), latency_ms,
+        "library query device=%s… qlen=%d k=%d mode=%s results=%d (%.0fms)",
+        device_id[:8], len(query_text), k, out["mode"], len(out["results"]),
+        latency_ms,
     )
-    return {"results": results, "mode": "lexical"}
+    return out
 
 
 @app.delete("/api/library")
@@ -1412,8 +1438,9 @@ async def health():
         "error_rate": round(errors / total, 4) if total else 0.0,
         "library_index": {
             "tracks": _get_library_index().track_count(),
-            # Slice 2 replaces the constant with a live "ok"|"down" probe.
-            "embedder": libindex.EMBEDDER_STATUS,
+            # Live probe, cached ~30 s inside the Embedder so polling this
+            # endpoint never hammers (or wakes) the embed server.
+            "embedder": _get_embedder().status(),
         },
     }
 

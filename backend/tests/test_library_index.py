@@ -100,7 +100,9 @@ def test_sync_upserts_new_tracks(client):
     assert body["indexed"] == 2
     assert body["skipped"] == 0
     assert body["deleted"] == 0
-    assert body["pending_embeddings"] == 0
+    # conftest's embedder is down, so newly indexed rows stay pending
+    # (Slice 2 semantics; the hybrid tests cover the embedded-at-sync case).
+    assert body["pending_embeddings"] == 2
 
 
 def test_sync_delta_skips_unchanged_doc_hash(client):
@@ -327,7 +329,8 @@ def test_library_rate_limit_returns_429(client, monkeypatch):
 
 def test_health_reports_library_index(client):
     h = client.get("/api/health").json()
-    assert h["library_index"] == {"tracks": 0, "embedder": "absent"}
+    # conftest stubs the embedder down; Slice 2's hybrid tests cover "ok".
+    assert h["library_index"] == {"tracks": 0, "embedder": "down"}
     _sync(client, [_track("t1")])
     h = client.get("/api/health").json()
     assert h["library_index"]["tracks"] == 1
