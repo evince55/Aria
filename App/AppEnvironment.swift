@@ -66,6 +66,10 @@ private struct SavedEQProfilesManagerKey: EnvironmentKey {
     @MainActor static var defaultValue: SavedEQProfilesManager { SavedEQProfilesManager() }
 }
 
+private struct LibrarySearchManagerKey: EnvironmentKey {
+    @MainActor static var defaultValue: LibrarySearchManager { LibrarySearchManager() }
+}
+
 extension EnvironmentValues {
     var playerManager: PlayerManager {
         get { self[PlayerManagerKey.self] }
@@ -114,5 +118,9 @@ extension EnvironmentValues {
     var savedEQProfilesManager: SavedEQProfilesManager {
         get { self[SavedEQProfilesManagerKey.self] }
         set { self[SavedEQProfilesManagerKey.self] = newValue }
+    }
+    var librarySearchManager: LibrarySearchManager {
+        get { self[LibrarySearchManagerKey.self] }
+        set { self[LibrarySearchManagerKey.self] = newValue }
     }
 }

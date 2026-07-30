@@ -1,14 +1,36 @@
 import SwiftUI
 
+/// Which index a search query runs against: the global YouTube catalog
+/// (`/api/search`) or the user's own synced library (`/api/library/query`).
+/// The Library scope only appears when `LibrarySearchManager.scopeAvailable`
+/// says the backend supports it (see the gating rules on that manager).
+enum SearchScope: String, CaseIterable {
+    case youtube = "YouTube"
+    case library = "Library"
+}
+
 struct SearchView: View {
     @EnvironmentObject private var playerManager: PlayerManager
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var settingsManager: SettingsManager
+    @EnvironmentObject private var librarySearchManager: LibrarySearchManager
+    @EnvironmentObject private var playlistsManager: PlaylistsManager
 
     @State private var query = ""
     @State private var results: Loadable<[Track]> = .idle
+    @State private var scope: SearchScope = .youtube
+    /// The query whose library results are on screen — the default name for
+    /// "Save as playlist".
+    @State private var activeLibraryQuery = ""
+    @State private var savedPlaylistName: String?
     @FocusState private var isSearchFocused: Bool
+
+    /// Identity for the debounced search task: retrigger on either edit.
+    private struct SearchTaskID: Equatable {
+        let query: String
+        let scope: SearchScope
+    }
 
     // Pagination state for infinite scroll.
     @State private var activeQuery = ""
@@ -29,22 +51,75 @@ struct SearchView: View {
             ZStack {
                 tokens.background.ignoresSafeArea()
 
-                content
+                VStack(spacing: 0) {
+                    if librarySearchManager.scopeAvailable {
+                        scopePicker
+                    }
+                    content
+                        .frame(maxHeight: .infinity)
+                }
             }
             .navigationTitle("Search")
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
-                        prompt: "Songs, artists, videos")
+                        prompt: scope == .library
+                            ? "Ask your library"
+                            : "Songs, artists, videos")
             .focused($isSearchFocused)
-            .task(id: query) {
+            .task(id: SearchTaskID(query: query, scope: scope)) {
                 await runSearch(for: query)
             }
             .onAppear { isSearchFocused = false }
+            .onChange(of: librarySearchManager.scopeAvailable) { available in
+                // The scope can disappear mid-session (URL cleared, backend
+                // downgraded); never strand the picker on a hidden scope.
+                if !available, scope == .library { scope = .youtube }
+            }
+            .toolbar {
+                if scope == .library,
+                   let tracks = librarySearchManager.results.value,
+                   !tracks.isEmpty {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button {
+                            Haptics.success()
+                            let name = activeLibraryQuery.isEmpty ? "Library Search" : activeLibraryQuery
+                            playlistsManager.create(name: name, tracks: tracks)
+                            savedPlaylistName = name
+                        } label: {
+                            Label("Save as playlist", systemImage: "text.badge.plus")
+                        }
+                    }
+                }
+            }
+            .alert(
+                "Saved as playlist",
+                isPresented: Binding(
+                    get: { savedPlaylistName != nil },
+                    set: { if !$0 { savedPlaylistName = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("\u{201C}\(savedPlaylistName ?? "")\u{201D} was added to your playlists.")
+            }
         }
+    }
+
+    private var scopePicker: some View {
+        Picker("Search scope", selection: $scope) {
+            ForEach(SearchScope.allCases, id: \.self) { s in
+                Text(s.rawValue).tag(s)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, DS.Spacing.lg)
+        .padding(.vertical, DS.Spacing.sm)
     }
 
     @ViewBuilder
     private var content: some View {
-        if !isSearchFocused && query.isEmpty {
+        if scope == .library {
+            libraryContent
+        } else if !isSearchFocused && query.isEmpty {
             idleHint
         } else {
             switch results {
@@ -62,6 +137,142 @@ struct SearchView: View {
                 searchErrorView(error)
             }
         }
+    }
+
+    // MARK: - Library scope
+
+    @ViewBuilder
+    private var libraryContent: some View {
+        switch librarySearchManager.results {
+        case .idle:
+            libraryIdleHint
+        case .loading:
+            if let cached = librarySearchManager.results.value, !cached.isEmpty {
+                libraryResultsList(cached)
+            } else {
+                searchLoadingView
+            }
+        case .loaded(let tracks):
+            if tracks.isEmpty {
+                libraryEmptyResultsView
+            } else {
+                libraryResultsList(tracks)
+            }
+        case .failed(let error):
+            searchErrorView(error)
+        }
+    }
+
+    // NOTE: gate/empty-state copy below needs owner review before ship
+    // (per spec §5 — gate copy has shipped broken with green tests before).
+    private var libraryIdleHint: some View {
+        VStack(spacing: DS.Spacing.md) {
+            Spacer(minLength: 40)
+            ZStack {
+                Circle()
+                    .fill(tokens.surface)
+                    .frame(width: 96, height: 96)
+                Image(systemName: "books.vertical")
+                    .font(.system(size: 36, weight: .light))
+                    .foregroundColor(tokens.textSecondary)
+            }
+            Text("Ask your library")
+                .font(DS.Typography.titleMedium)
+                .foregroundColor(tokens.textPrimary)
+            Text("Search your favorites, playlists, and imports in your own words — try \u{201C}mellow late-night guitar\u{201D}")
+                .font(DS.Typography.caption)
+                .foregroundColor(tokens.textSecondary)
+                .multilineTextAlignment(.center)
+            Spacer(minLength: 40)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, DS.Spacing.lg)
+    }
+
+    private var libraryEmptyResultsView: some View {
+        VStack(spacing: DS.Spacing.md) {
+            Spacer(minLength: 40)
+            ZStack {
+                Circle()
+                    .fill(tokens.surface)
+                    .frame(width: 96, height: 96)
+                Image(systemName: "books.vertical")
+                    .font(.system(size: 36, weight: .light))
+                    .foregroundColor(tokens.textSecondary)
+            }
+            Text("No matches in your library")
+                .font(DS.Typography.titleMedium)
+                .foregroundColor(tokens.textPrimary)
+            Text("Your library syncs shortly after you favorite, import, or play tracks. Try different words, or check back in a minute.")
+                .font(DS.Typography.caption)
+                .foregroundColor(tokens.textSecondary)
+                .multilineTextAlignment(.center)
+            Spacer(minLength: 40)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, DS.Spacing.lg)
+    }
+
+    private func libraryResultsList(_ tracks: [Track]) -> some View {
+        List {
+            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                let isCurrent = playerManager.currentTrack?.id == track.id
+                Button {
+                    dismissKeyboard()
+                    Haptics.light()
+                    // Library results play as a queue slice (these are the
+                    // user's own tracks), unlike YouTube results which seed
+                    // a radio.
+                    playerManager.playSlice(tracks, startIndex: index)
+                    recentlyPlayedManager.trackPlayed(track)
+                } label: {
+                    HStack(spacing: DS.Spacing.sm) {
+                        TrackThumbnail(url: track.thumbnailURL, size: 52, cornerRadius: DS.Radius.sm, tokens: tokens)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(track.title)
+                                .font(DS.Typography.bodyEm)
+                                .lineLimit(1)
+                                .foregroundColor(isCurrent ? tokens.accent : tokens.textPrimary)
+                            HStack(spacing: 4) {
+                                if isCurrent {
+                                    NowPlayingIndicator(isPlaying: playerManager.isPlaying, accent: tokens.accent)
+                                }
+                                Text(track.artist)
+                                    .font(DS.Typography.caption)
+                                    .lineLimit(1)
+                                    .foregroundColor(tokens.textSecondary)
+                            }
+                        }
+
+                        Spacer(minLength: 0)
+
+                        if let secs = track.duration {
+                            Text(formatDuration(secs))
+                                .font(DS.Typography.caption)
+                                .monospacedDigit()
+                                .foregroundColor(tokens.textSecondary)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .addToQueueGesture(playerManager: playerManager, track: track)
+                .trackRowAccessibility(
+                    title: track.title, artist: track.artist,
+                    isCurrent: isCurrent,
+                    isPlaying: playerManager.isPlaying
+                )
+                .listRowBackground(tokens.background)
+                .listRowSeparatorTint(tokens.hairline)
+                .listRowInsets(EdgeInsets(top: 4, leading: DS.Spacing.md, bottom: 4, trailing: DS.Spacing.md))
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.interactively)
     }
 
     /// Drops the search keyboard so it doesn't cover the mini player after a
@@ -487,6 +698,24 @@ struct SearchView: View {
 
     private func runSearch(for raw: String) async {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
+
+        if scope == .library {
+            guard trimmed.count >= 3 else {
+                librarySearchManager.clearResults()
+                return
+            }
+            // Same debounce discipline as the YouTube path; the manager owns
+            // the Loadable transitions and in-flight cancellation.
+            do {
+                try await Task.sleep(nanoseconds: 600_000_000)
+            } catch {
+                return
+            }
+            activeLibraryQuery = trimmed
+            librarySearchManager.search(query: trimmed)
+            return
+        }
+
         guard trimmed.count >= 3 else {
             results = .idle
             canLoadMore = false
