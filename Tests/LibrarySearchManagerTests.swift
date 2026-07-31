@@ -223,7 +223,7 @@ final class LibrarySearchManagerTests: XCTestCase {
 
         // User clears the backend URL in Settings.
         currentBase = nil
-        manager.backendURLDidChange()
+        manager.backendURLDidChange(to: nil)
 
         try await waitUntil { session.recordedRequestObjects.contains { $0.httpMethod == "DELETE" } }
         let deleteRequest = try XCTUnwrap(
@@ -245,7 +245,7 @@ final class LibrarySearchManagerTests: XCTestCase {
         configure(manager, favorites: FavoritesManager(store: InMemoryKeyValueStore()))
         await manager.probeHealth() // records lastKnownBaseURL
 
-        manager.backendURLDidChange() // resolves to the same URL
+        manager.backendURLDidChange(to: "https://api.example") // same URL
 
         // Allow the async task to settle, then assert no DELETE went out.
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -288,9 +288,14 @@ final class LibrarySearchManagerTests: XCTestCase {
         let sync = LibrarySyncService(
             store: InMemoryKeyValueStore(), session: session,
             resolveBaseURL: resolve, resolveAPIKey: { nil })
+        // The override resolver is injected (plain normalize, no Bundle
+        // lookup) so these tests stay hermetic on a real-IP device worktree;
+        // a short debounce keeps them fast.
         let manager = LibrarySearchManager(
             syncService: sync, session: session,
-            resolveBaseURL: resolve, resolveAPIKey: { nil })
+            resolveBaseURL: resolve, resolveAPIKey: { nil },
+            resolveBaseURLForOverride: { BackendConfig.normalize($0) },
+            urlChangeDebounce: 0.15)
         configure(manager, favorites: FavoritesManager(store: InMemoryKeyValueStore()),
                   settings: settings)
 

@@ -28,8 +28,19 @@ final class LibrarySearchManager: ObservableObject {
     let syncService: LibrarySyncService
     private let session: URLSessionProtocol
     private let resolveBaseURL: () -> String?
+    /// Resolves the base URL for an override value *emitted* by the settings
+    /// publisher. The publisher fires on willSet — before MoreView's
+    /// `onChange` persists the value — so a synchronous `resolveBaseURL()`
+    /// re-read still returns the OLD URL (QA: the first change event skipped
+    /// the privacy DELETE because of exactly that).
+    private let resolveBaseURLForOverride: (String) -> String?
     private let resolveAPIKey: () -> String?
     private let now: () -> Date
+    /// Debounce on the URL-override publisher so per-keystroke edits don't
+    /// run the delete/probe/sync pipeline per character; only the settled
+    /// value fires, and `lastKnownBaseURL` (untouched meanwhile) keeps the
+    /// DELETE aimed at the original old URL.
+    private let urlChangeDebounce: TimeInterval
 
     /// True once `/api/health` reported `library_index` this session.
     private(set) var healthProbeSawLibraryIndex = false
@@ -54,12 +65,18 @@ final class LibrarySearchManager: ObservableObject {
             BackendConfig.isConfigured ? BackendConfig.baseURL : nil
         },
         resolveAPIKey: @escaping () -> String? = { BackendConfig.apiKey },
+        resolveBaseURLForOverride: @escaping (String) -> String? = {
+            BackendConfig.resolvedBaseURL(forOverride: $0)
+        },
+        urlChangeDebounce: TimeInterval = 0.5,
         now: @escaping () -> Date = Date.init
     ) {
         self.syncService = syncService ?? LibrarySyncService(
             session: session, resolveBaseURL: resolveBaseURL, resolveAPIKey: resolveAPIKey)
         self.session = session
         self.resolveBaseURL = resolveBaseURL
+        self.resolveBaseURLForOverride = resolveBaseURLForOverride
+        self.urlChangeDebounce = urlChangeDebounce
         self.resolveAPIKey = resolveAPIKey
         self.now = now
         self.mutationDebouncer = Debouncer(delay: 0.5) { [weak self] in
@@ -98,8 +115,18 @@ final class LibrarySearchManager: ObservableObject {
         recents.$recentlyPlayed.dropFirst()
             .sink { [weak self] _ in self?.libraryDidMutate() }
             .store(in: &cancellables)
+        // Privacy delete flow: react to the value EMITTED by the publisher
+        // (resolved via `resolveBaseURLForOverride`), never a synchronous
+        // re-read — the emission arrives on willSet, before the new value is
+        // persisted, so a re-read compares old against old and skips the
+        // DELETE on the first change event. The debounce coalesces
+        // per-keystroke edits into one settled change.
         settings.$backendURLOverride.dropFirst().removeDuplicates()
-            .sink { [weak self] _ in self?.backendURLDidChange() }
+            .debounce(for: .seconds(urlChangeDebounce), scheduler: DispatchQueue.main)
+            .sink { [weak self] override in
+                guard let self else { return }
+                self.backendURLDidChange(to: self.resolveBaseURLForOverride(override))
+            }
             .store(in: &cancellables)
 
         lastKnownBaseURL = resolveBaseURL()
@@ -268,17 +295,25 @@ final class LibrarySearchManager: ObservableObject {
     /// best-effort `DELETE /api/library?device_id=` at the OLD backend and
     /// clear local synced-hash state so a future backend starts fresh
     /// (spec §10 step 6). Never blocks the UI.
-    func backendURLDidChange() {
+    ///
+    /// `new` is the base URL resolved from the value the publisher emitted —
+    /// NOT re-read from `UserDefaults`, which still holds the old value while
+    /// a willSet emission is being delivered. Comparing the emitted value to
+    /// `lastKnownBaseURL` makes the DELETE fire on the FIRST change event
+    /// (including change-to-empty and change-to-invalid); a re-emission of
+    /// the same URL is a no-op that neither deletes nor resets local state.
+    func backendURLDidChange(to new: String?) {
         let old = lastKnownBaseURL
-        let new = resolveBaseURL()
+        guard new != old else { return }
         lastKnownBaseURL = new
         healthProbeSawLibraryIndex = false
         clearResults()
         updateScopeAvailable()
         Task { [weak self] in
             guard let self else { return }
-            await self.syncService.deleteRemoteAndReset(
-                oldBaseURL: old == new ? nil : old)
+            // Local reset always; the remote DELETE goes out whenever there
+            // was an old backend to clean up (best-effort, never surfaced).
+            await self.syncService.deleteRemoteAndReset(oldBaseURL: old)
             if new != nil {
                 await self.probeHealth()
                 self.libraryDidMutate() // seed the new backend
