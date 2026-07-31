@@ -3,3 +3,6 @@
 -r requirements.txt
 pytest>=8.0
 httpx>=0.27
+# numpy reads/writes the recorded eval-embedding fixture
+# (tests/fixtures/library_eval_vecs.npz) — retrieval eval, RAG Slice 4.
+numpy>=1.26
