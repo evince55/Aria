@@ -69,4 +69,19 @@ enum BackendConfig {
     nonisolated static var isConfigured: Bool {
         !baseURL.contains(placeholderHost)
     }
+
+    /// The base URL that WOULD resolve if `override` were the in-app override
+    /// value, or `nil` when that resolution is still the unconfigured
+    /// placeholder. Lets Combine subscribers of the override react to the
+    /// value *emitted* by the publisher instead of re-reading `UserDefaults` —
+    /// which, on a willSet emission, still holds the OLD value (the persisted
+    /// write lands only after MoreView's `onChange` fires `save()`).
+    nonisolated static func resolvedBaseURL(forOverride override: String?) -> String? {
+        let url = resolve(
+            override: override,
+            plistURL: Bundle.main.object(forInfoDictionaryKey: "ARIA_BACKEND_URL") as? String,
+            homelabHost: Bundle.main.object(forInfoDictionaryKey: "ARIA_HOMELAB_HOST") as? String
+        )
+        return url.contains(placeholderHost) ? nil : url
+    }
 }
