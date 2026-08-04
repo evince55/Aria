@@ -39,11 +39,26 @@ struct SearchView: View {
     @State private var isLoadingMore = false
     private let pageSize = 25
 
-    private let searchService: YouTubeSearchService
+    /// Resolved from `BackendConfig` so the same view drives the Aria backend
+    /// or a Subsonic server without knowing which.
+    ///
+    /// Computed per search, never captured at `init`: the user can switch
+    /// server type or finish entering Subsonic credentials while this view is
+    /// alive, and a stored client would keep querying the old backend — the
+    /// symptom is a 404 from `/api/search` against a Subsonic host.
+    private var searchService: MusicSearching {
+        BackendConfig.makeClient(session: PlayerManager.sharedURLSession,
+                                 from: settingsManager.backendSnapshot)?.search
+            ?? YouTubeSearchService(backendURL: settingsManager.resolvedBaseURL)
+    }
     private var tokens: DesignTokens { themeManager.tokens }
 
-    init() {
-        self.searchService = YouTubeSearchService(backendURL: PlayerManager.backendURL)
+    /// "videos" is a YouTube-ism and is simply wrong against a Subsonic
+    /// library, which indexes songs/artists/albums.
+    private var remoteSearchPrompt: String {
+        settingsManager.serverKind == .subsonic
+            ? "Songs, artists, albums"
+            : "Songs, artists, videos"
     }
 
     var body: some View {
@@ -63,7 +78,7 @@ struct SearchView: View {
             .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: scope == .library
                             ? "Ask your library"
-                            : "Songs, artists, videos")
+                            : remoteSearchPrompt)
             .focused($isSearchFocused)
             .task(id: SearchTaskID(query: query, scope: scope)) {
                 await runSearch(for: query)
@@ -299,7 +314,7 @@ struct SearchView: View {
             Text("Search Aria")
                 .font(DS.Typography.titleMedium)
                 .foregroundColor(tokens.textPrimary)
-            Text("Tap the search bar to find songs, artists, and videos")
+            Text("Tap the search bar to find \(remoteSearchPrompt.lowercased())")
                 .font(DS.Typography.caption)
                 .foregroundColor(tokens.textSecondary)
                 .multilineTextAlignment(.center)

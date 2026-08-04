@@ -4,17 +4,26 @@ import XCTest
 @MainActor
 final class BackendConfigTests: XCTestCase {
 
+    /// Every key `BackendConfig` reads. The test host shares the *app's*
+    /// defaults, so anything left behind by a real run of the app in the same
+    /// simulator (or by an earlier test) leaks in — `serverKind` in particular
+    /// now decides `isConfigured`.
+    private func clearBackendDefaults() {
+        for key in [BackendConfig.urlOverrideKey, BackendConfig.apiKeyOverrideKey,
+                    BackendConfig.serverKindKey, BackendConfig.subsonicUsernameKey] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
     override func setUp() {
         super.setUp()
-        UserDefaults.standard.removeObject(forKey: BackendConfig.urlOverrideKey)
-        UserDefaults.standard.removeObject(forKey: BackendConfig.apiKeyOverrideKey)
+        clearBackendDefaults()
     }
 
     override func tearDown() {
         // Never leak an override into the shared simulator defaults — it would
         // silently redirect every later test that reads PlayerManager.backendURL.
-        UserDefaults.standard.removeObject(forKey: BackendConfig.urlOverrideKey)
-        UserDefaults.standard.removeObject(forKey: BackendConfig.apiKeyOverrideKey)
+        clearBackendDefaults()
         super.tearDown()
     }
 
@@ -92,6 +101,9 @@ final class BackendConfigTests: XCTestCase {
         UserDefaults.standard.set("https://override.example", forKey: BackendConfig.urlOverrideKey)
         XCTAssertEqual(BackendConfig.baseURL, "https://override.example")
         XCTAssertEqual(PlayerManager.backendURL, "https://override.example")
+        // setUp cleared serverKind, so this is the .aria default: a URL alone
+        // is enough. (A Subsonic kind would also need credentials.)
+        XCTAssertEqual(BackendConfig.serverKind, .aria)
         XCTAssertTrue(BackendConfig.isConfigured)
     }
 

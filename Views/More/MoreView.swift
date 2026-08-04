@@ -212,9 +212,32 @@ struct MoreView: View {
     private var backendSection: some View {
         MoreCard(title: "Backend", tokens: tokens) {
             VStack(spacing: 0) {
+                // Type comes first: it decides what the fields below even mean
+                // (API key for Aria's backend, username/password for Subsonic).
+                HStack(spacing: DS.Spacing.md) {
+                    iconBadge(systemName: "point.3.connected.trianglepath.dotted", color: tokens.accent)
+                    Text("Server Type")
+                        .font(DS.Typography.body)
+                        .foregroundColor(tokens.textPrimary)
+                    Spacer()
+                    Picker("", selection: $settingsManager.serverKind) {
+                        ForEach(BackendConfig.ServerKind.allCases) { kind in
+                            Text(kind.label).tag(kind)
+                        }
+                    }
+                    .tint(tokens.accent)
+                    // Without this the menu label wraps to two lines in the row.
+                    .fixedSize()
+                }
+                .padding(.horizontal, DS.Spacing.md)
+                .padding(.vertical, DS.Spacing.md)
+
+                Divider().background(tokens.hairline).padding(.leading, 56)
+
                 HStack(spacing: DS.Spacing.md) {
                     iconBadge(systemName: "server.rack", color: tokens.accent)
-                    TextField("Server URL (https://host:port)", text: $settingsManager.backendURLOverride)
+                    TextField(settingsManager.serverKind.urlPlaceholder,
+                              text: $settingsManager.backendURLOverride)
                         .font(DS.Typography.body)
                         .foregroundColor(tokens.textPrimary)
                         .keyboardType(.URL)
@@ -226,18 +249,54 @@ struct MoreView: View {
 
                 Divider().background(tokens.hairline).padding(.leading, 56)
 
-                HStack(spacing: DS.Spacing.md) {
-                    iconBadge(systemName: "key", color: tokens.accent)
-                    SecureField("API key (optional)", text: $settingsManager.backendAPIKeyOverride)
-                        .font(DS.Typography.body)
-                        .foregroundColor(tokens.textPrimary)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled(true)
-                }
-                .padding(.horizontal, DS.Spacing.md)
-                .padding(.vertical, DS.Spacing.md)
+                if settingsManager.serverKind == .subsonic {
+                    HStack(spacing: DS.Spacing.md) {
+                        iconBadge(systemName: "person", color: tokens.accent)
+                        TextField("Username", text: $settingsManager.subsonicUsername)
+                            .font(DS.Typography.body)
+                            .foregroundColor(tokens.textPrimary)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                    }
+                    .padding(.horizontal, DS.Spacing.md)
+                    .padding(.vertical, DS.Spacing.md)
 
-                Divider().background(tokens.hairline).padding(.leading, 56)
+                    Divider().background(tokens.hairline).padding(.leading, 56)
+
+                    HStack(spacing: DS.Spacing.md) {
+                        iconBadge(systemName: "lock", color: tokens.accent)
+                        SecureField("Password", text: $settingsManager.subsonicPassword)
+                            .font(DS.Typography.body)
+                            .foregroundColor(tokens.textPrimary)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                    }
+                    .padding(.horizontal, DS.Spacing.md)
+                    .padding(.vertical, DS.Spacing.md)
+
+                    Text(settingsManager.credentialStorageFailed
+                         ? "Couldn't save the password to the Keychain — it will be forgotten when Aria quits."
+                         : "Stored in the iOS Keychain. Aria sends a salted token, never your password.")
+                        .font(DS.Typography.micro)
+                        .foregroundColor(settingsManager.credentialStorageFailed ? .orange : tokens.textSecondary)
+                        .padding(.horizontal, DS.Spacing.md)
+                        .padding(.bottom, DS.Spacing.sm)
+
+                    Divider().background(tokens.hairline).padding(.leading, 56)
+                } else {
+                    HStack(spacing: DS.Spacing.md) {
+                        iconBadge(systemName: "key", color: tokens.accent)
+                        SecureField("API key (optional)", text: $settingsManager.backendAPIKeyOverride)
+                            .font(DS.Typography.body)
+                            .foregroundColor(tokens.textPrimary)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled(true)
+                    }
+                    .padding(.horizontal, DS.Spacing.md)
+                    .padding(.vertical, DS.Spacing.md)
+
+                    Divider().background(tokens.hairline).padding(.leading, 56)
+                }
 
                 Button {
                     Haptics.light()
@@ -256,12 +315,27 @@ struct MoreView: View {
         }
         .onChange(of: settingsManager.backendURLOverride) { _ in
             settingsManager.save()
-            playerManager.reconfigureBackend()
+            playerManager.reconfigureBackend(settingsManager.backendSnapshot)
             connectionTest = .idle
         }
         .onChange(of: settingsManager.backendAPIKeyOverride) { _ in
             settingsManager.save()
-            playerManager.reconfigureBackend()
+            playerManager.reconfigureBackend(settingsManager.backendSnapshot)
+            connectionTest = .idle
+        }
+        .onChange(of: settingsManager.serverKind) { _ in
+            settingsManager.save()
+            playerManager.reconfigureBackend(settingsManager.backendSnapshot)
+            connectionTest = .idle
+        }
+        .onChange(of: settingsManager.subsonicUsername) { _ in
+            settingsManager.save()
+            playerManager.reconfigureBackend(settingsManager.backendSnapshot)
+            connectionTest = .idle
+        }
+        .onChange(of: settingsManager.subsonicPassword) { _ in
+            settingsManager.save()
+            playerManager.reconfigureBackend(settingsManager.backendSnapshot)
             connectionTest = .idle
         }
     }
@@ -270,8 +344,8 @@ struct MoreView: View {
     private var connectionStatusRow: some View {
         switch connectionTest {
         case .idle:
-            Text(BackendConfig.isConfigured
-                 ? "Server: \(BackendConfig.baseURL)"
+            Text(settingsManager.isServerConfigured
+                 ? "Server: \(settingsManager.resolvedBaseURL)"
                  : "No server configured — local library only")
                 .font(DS.Typography.caption)
                 .foregroundColor(tokens.textSecondary)
@@ -297,10 +371,34 @@ struct MoreView: View {
         }
     }
 
-    /// GETs `/api/health` on the currently resolved backend with a short
-    /// timeout and reports the outcome inline.
+    /// Probes the currently resolved backend and reports the outcome inline —
+    /// `/api/health` for Aria's backend, `ping.view` for Subsonic.
     private func testConnection() {
         connectionTest = .loading
+
+        // Subsonic verifies credentials too, via ping.view — a URL that loads
+        // is not enough when a username/password is involved.
+        if settingsManager.serverKind == .subsonic {
+            let base = settingsManager.resolvedBaseURL
+            let user = settingsManager.subsonicUsername
+            let password = settingsManager.subsonicPassword
+            Task {
+                guard !user.isEmpty, !password.isEmpty else {
+                    connectionTest = .failed(SubsonicClient.ClientError.notConfigured)
+                    return
+                }
+                let client = SubsonicClient(baseURL: base, username: user,
+                                            password: password,
+                                            session: PlayerManager.sharedURLSession)
+                do {
+                    connectionTest = .loaded("Connected · \(try await client.ping())")
+                } catch {
+                    connectionTest = .failed(error)
+                }
+            }
+            return
+        }
+
         let base = BackendConfig.baseURL
         let apiKey = BackendConfig.apiKey
         Task {
