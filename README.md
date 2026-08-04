@@ -145,8 +145,18 @@ Aria starts as a **local-file player with no server configured** — import
 some FLACs from the Files app and you're done. If you self-host, point it
 at your server under **More → Backend**: pick Subsonic for
 Navidrome/Airsonic/Gonic, or Aria Backend if you deployed
-[`backend/`](backend/) yourself. Plain `http://` to a LAN address works;
-see [ATS / TLS](#ats--tls) if your server is somewhere else.
+[`backend/`](backend/) yourself.
+
+One thing to know about plain HTTP: `make install` builds **Release**,
+which uses `Aria---Music-Browser-Info-Release.plist`. That plist has **no
+blanket ATS bypass** — its only relevant key is `NSAllowsLocalNetworking`.
+The Debug plist does have one (`NSAllowsArbitraryLoads`), so a server that
+works when you run from Xcode can still be refused by a `make install`
+build.
+
+HTTPS always works. If your server is plain `http://` and Aria can't reach
+it, add an `NSExceptionDomains` entry for its host (see
+[ATS / TLS](#ats--tls)) or put it behind TLS.
 
 ## Deployment
 
