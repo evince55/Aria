@@ -1,8 +1,9 @@
 # Aria
 
 iOS music player combining YouTube streaming (backend-mediated) with a
-local high-quality file library (FLAC, MP3, AAC, ALAC, AIFF, WAV) and
-a 10-band parametric EQ. iOS 16.6+, Swift 5, no third-party dependencies.
+local high-quality file library (FLAC, MP3, AAC, ALAC, AIFF, WAV), a
+10-band parametric EQ, and natural-language search over your own library.
+iOS 16.6+, Swift 5, no third-party dependencies.
 
 ## Features
 
@@ -25,6 +26,18 @@ a 10-band parametric EQ. iOS 16.6+, Swift 5, no third-party dependencies.
   recently-added / title / artist / duration / file size; group by
   album or artist; sort/group preferences persist across launches
   via `@AppStorage`.
+- **Ask Your Library** — natural-language search over your own library,
+  backed by hybrid lexical + vector retrieval. See
+  [Ask Your Library](#ask-your-library) below.
+- **Smart playlists** — rule-based playlists evaluated live against the
+  library rather than frozen at creation time.
+- **M3U import / export + bulk folder import** — round-trip playlists and
+  import a directory tree in one action.
+- **AutoEQ profiles** — browsable AutoEQ catalog; search your headphones
+  and apply a measured correction curve in one tap, or import a profile.
+- **Offline downloads** — hold-to-queue with an audio-quality badge.
+- **Aria Pro** — StoreKit 2 one-time unlock gating parametric EQ + AutoEQ,
+  smart playlists, and M3U/folder import.
 
 ## Architecture
 
@@ -40,6 +53,8 @@ AriaApp
        │    └─ TLSPinningDelegate (dev-only cert pin)
        ├─ LocalLibraryManager (file import, metadata extraction, persistence)
        │    └─ KeyValueStore → JSONFileStore
+       ├─ LibrarySyncService  (doc composition, SHA-256 delta sync)
+       ├─ LibrarySearchService / LibrarySearchManager (Ask Your Library)
        ├─ LibraryViewModel    (search/sort/group, @AppStorage persistence)
        └─ FavoritesManager, PlaylistsManager, RecentlyPlayedManager
 
@@ -49,7 +64,7 @@ Views/
              MissingTrackRepairSheet, LibraryViewModel
   Player/    FullScreenPlayerView, MiniPlayerView, EqualizerView,
              QueueView, AddToQueueModifier
-  Search/    SearchView
+  Search/    SearchView (YouTube + Library scopes)
   Playlists/ PlaylistsView, PlaylistDetailView
   Favorites/ FavoritesView
   More/      SettingsView, etc.
@@ -88,7 +103,8 @@ required.
 xcodebuildmcp test_sim --scheme AriaTests
 ```
 
-157 tests across 19 files. `AriaTests` includes `LocalLibraryManagerTests`
+432 tests across 46 files in `AriaTests`, plus 149 backend tests
+(`python3 -m pytest backend/tests`). `AriaTests` includes `LocalLibraryManagerTests`
 (import, metadata, orphan cleanup, repair, atomic write, format gate,
 cloud + zero-byte rejection), `PlayerManagerTests` and
 `PlayerManagerMissingTrackTests` (queue, play generation, EQ
@@ -97,6 +113,52 @@ tracks), `LibraryViewModelTests` (search/sort/group/persistence), and
 the rest of the suite (`EQController`, `EqualizerState`, `Debouncer`,
 `FavoritesManager`, `PlaylistsManager`, `PlaybackState`, `Loadable`,
 `FloatClamp`, `TLSPinningDelegate`, `YouTubeSearchService`).
+
+## Ask Your Library
+
+Natural-language search across your own library — "mellow acoustic stuff I
+played a lot last winter" rather than an exact title match. Built in four
+slices against `docs/design/2026-07-28-rag-library-search-spec.md`.
+
+**How retrieval works.** Each track is composed into a short document
+(title, artist, album, duration bucket, playlist membership, affinity
+flags) and hashed with SHA-256; only changed docs are re-synced. The
+backend indexes those docs two ways and fuses the results:
+
+```
+query ──┬─► FTS5 / BM25          top-50 ─┐
+        └─► sqlite-vec cosine     top-50 ─┴─► Reciprocal Rank Fusion (k=60) ─► top-k
+                (768-dim, nomic-embed-text-v1.5 via llama-swap)
+```
+
+Each hit is labelled `lexical`, `vector`, or `both`. If the embedder is
+unreachable the query degrades to BM25-only and reports `mode: lexical`
+rather than failing — vectors are backfilled on a later sync.
+
+**Privacy.** Indexes are per-device and scoped by a stable `device_id`.
+Raw query text and document text are never logged — only lengths, counts,
+latency and mode; `aria-backend.service` passes `--no-access-log` so
+uvicorn cannot journal `/api/library/query?q=...`. Changing the backend URL
+issues `DELETE /api/library` and resets local state. FTS5 input is
+sanitized against query injection.
+
+**Quality is gated in CI.** `tests/eval_harness.py` measures recall@k and
+nDCG@k over hand-labeled fixtures served by a fixture embedder, so no
+network is needed in CI. The golden-set test skips loudly until the
+fixtures exist, then fails the build if hybrid recall@10 or nDCG@10 drops
+below `eval_baseline.json`, and warns if the hybrid lift over lexical
+inverts. Labels are authored by hand — never model-generated — so the
+labeller is independent of the system under test.
+
+**Endpoints.** `POST /api/library/sync` (delta upsert, 2 MB / 5000-track
+caps), `GET /api/library/query`, `DELETE /api/library`. All behind the API
+key and a dedicated rate-limit bucket. `/api/health` reports
+`library_index {tracks, embedder}`.
+
+**Config.** `ARIA_EMBED_URL` points at an OpenAI-format `/v1/embeddings`
+endpoint — in this deployment, llama-swap on the Windows GPU box over the
+tailnet, serving `nomic-embed-text-v1.5` (Q8_0, 768-dim). Without it the
+feature runs lexical-only.
 
 ## Configuration
 
