@@ -175,7 +175,7 @@ final class PlayerManager: NSObject, ObservableObject {
     override init() {
         let session = Self.defaultURLSession()
         self.urlSession = session
-        self.prefetcher = StreamPrefetcher(resolver: StreamResolver(session: session))
+        self.prefetcher = StreamPrefetcher(resolver: Self.makeResolver(session: session, snapshot: .current))
         self.radioService = RadioService(session: session)
         self.eq = EQController()
         self.playbackStore = JSONFileStore(filename: "playback_state.json")
@@ -194,7 +194,7 @@ final class PlayerManager: NSObject, ObservableObject {
         playbackStore: KeyValueStore = InMemoryKeyValueStore()
     ) {
         self.urlSession = urlSession
-        self.prefetcher = StreamPrefetcher(resolver: StreamResolver(session: urlSession))
+        self.prefetcher = StreamPrefetcher(resolver: Self.makeResolver(session: urlSession, snapshot: .current))
         self.radioService = RadioService(session: urlSession)
         self.eq = eq
         self.playbackStore = playbackStore
@@ -209,9 +209,23 @@ final class PlayerManager: NSObject, ObservableObject {
     /// changed in Settings, so the next resolve/radio call hits the new host.
     /// (They capture `Self.backendURL` at construction; the currently playing
     /// item keeps its already-resolved stream URL.)
-    func reconfigureBackend() {
-        prefetcher = StreamPrefetcher(resolver: StreamResolver(session: urlSession))
+    /// Callers with a `SettingsManager` pass its live snapshot; the default
+    /// re-reads `UserDefaults` + Keychain. Held so later resolves use the same
+    /// configuration without going back to the Keychain each time.
+    func reconfigureBackend(_ snapshot: BackendConfig.Snapshot = .current) {
+        prefetcher = StreamPrefetcher(resolver: Self.makeResolver(session: urlSession, snapshot: snapshot))
         radioService = RadioService(session: urlSession)
+    }
+
+    /// Picks the resolver for the configured server kind. Subsonic streams
+    /// resolve to a deterministic URL with no round-trip; the Aria backend
+    /// resolves through /api/resolve. Falls back to the Aria resolver when a
+    /// Subsonic server is selected but not yet credentialed, so playback of
+    /// already-downloaded tracks keeps working.
+    private static func makeResolver(session: URLSessionProtocol,
+                                     snapshot: BackendConfig.Snapshot) -> StreamResolving {
+        BackendConfig.makeClient(session: session, from: snapshot)?.resolver
+            ?? StreamResolver(session: session)
     }
 
     /// Shared init tail: registers audio-session observers, wires the debounced
@@ -231,7 +245,17 @@ final class PlayerManager: NSObject, ObservableObject {
         restorePlaybackState()
     }
 
-    private static func defaultURLSession() -> URLSessionProtocol {
+    /// The one production session views build backend clients against.
+    ///
+    /// Views must use this rather than calling `defaultURLSession()`: that
+    /// factory builds a delegate-backed `URLSession`, which retains itself
+    /// until invalidated, and SwiftUI re-creates view structs on every parent
+    /// render — so a per-view session would pile up sessions indefinitely.
+    static let sharedURLSession: URLSessionProtocol = defaultURLSession()
+
+    /// Shared production session factory. Internal (not private) so views that
+    /// build a backend client — SearchView — use the same configuration.
+    static func defaultURLSession() -> URLSessionProtocol {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.timeoutIntervalForResource = 60

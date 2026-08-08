@@ -40,9 +40,48 @@ final class SettingsManager: ObservableObject {
     /// string = no override.
     @Published var backendURLOverride: String = ""
     @Published var backendAPIKeyOverride: String = ""
+    /// Which protocol the configured server speaks (Aria backend vs Subsonic).
+    @Published var serverKind: BackendConfig.ServerKind = .aria
+    @Published var subsonicUsername: String = ""
+    /// Mirrored into the Keychain on save — never persisted to UserDefaults.
+    @Published var subsonicPassword: String = ""
+    /// Set when a Keychain write fails, so Settings can say so rather than let
+    /// the password silently vanish on the next launch. See `KeychainStore`.
+    @Published private(set) var credentialStorageFailed = false
+
+    /// The backend URL as currently *typed*, not as last saved.
+    var resolvedBaseURL: String {
+        BackendConfig.baseURL(override: backendURLOverride)
+    }
+
+    /// The live server configuration, for building backend clients. Reading
+    /// this instead of `BackendConfig.current` keeps the Keychain out of the
+    /// per-search path and reflects credentials the moment they're typed.
+    var backendSnapshot: BackendConfig.Snapshot {
+        BackendConfig.Snapshot(kind: serverKind, baseURL: resolvedBaseURL,
+                               subsonicUsername: subsonicUsername,
+                               subsonicPassword: subsonicPassword)
+    }
+
+    /// Live equivalent of `BackendConfig.isConfigured`, computed from the
+    /// published fields.
+    ///
+    /// Views must use this one. `BackendConfig` reads `UserDefaults`, which
+    /// `save()` only writes from an `onChange` — i.e. *after* SwiftUI has
+    /// already recomputed the body. A view reading `BackendConfig` directly
+    /// therefore renders one edit behind, which is invisible while typing a
+    /// URL (the next keystroke catches it up) but sticks on a one-shot change
+    /// like the Server Type picker.
+    var isServerConfigured: Bool {
+        BackendConfig.isConfigured(kind: serverKind, baseURL: resolvedBaseURL,
+                                   subsonicUsername: subsonicUsername,
+                                   subsonicPassword: subsonicPassword)
+    }
 
     private let maxHistoryItems = 20
     private let defaults = UserDefaults.standard
+    /// What the Keychain currently holds, so `save()` only writes on a change.
+    private var lastStoredPassword: String?
 
     init() { load() }
 
@@ -81,6 +120,10 @@ final class SettingsManager: ObservableObject {
         }
         backendURLOverride = defaults.string(forKey: BackendConfig.urlOverrideKey) ?? ""
         backendAPIKeyOverride = defaults.string(forKey: BackendConfig.apiKeyOverrideKey) ?? ""
+        serverKind = BackendConfig.ServerKind(rawValue: defaults.string(forKey: BackendConfig.serverKindKey) ?? "") ?? .aria
+        subsonicUsername = defaults.string(forKey: BackendConfig.subsonicUsernameKey) ?? ""
+        subsonicPassword = KeychainStore.get(account: KeychainStore.subsonicPasswordAccount) ?? ""
+        lastStoredPassword = subsonicPassword
     }
 
     func save() {
@@ -91,6 +134,17 @@ final class SettingsManager: ObservableObject {
         defaults.set(searchHistory, forKey: "search_history")
         defaults.set(backendURLOverride, forKey: BackendConfig.urlOverrideKey)
         defaults.set(backendAPIKeyOverride, forKey: BackendConfig.apiKeyOverrideKey)
+        defaults.set(serverKind.rawValue, forKey: BackendConfig.serverKindKey)
+        defaults.set(subsonicUsername, forKey: BackendConfig.subsonicUsernameKey)
+        // The password is a real credential: Keychain only. Guarded on an
+        // actual change — `save()` runs for every settings edit (theme, start
+        // page…), and the Keychain is far too expensive to hit each time.
+        if subsonicPassword != lastStoredPassword {
+            let stored = KeychainStore.set(subsonicPassword,
+                                           account: KeychainStore.subsonicPasswordAccount)
+            credentialStorageFailed = !stored
+            if stored { lastStoredPassword = subsonicPassword }
+        }
     }
 
     func setTheme(_ id: String) {
