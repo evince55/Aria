@@ -194,15 +194,8 @@ struct FavoritesView: View {
             } label: {
                 Label("Add to Playlist", systemImage: "music.note.list")
             }
-            if let url = track.shareURL {
-                ShareLink(item: url, subject: Text(track.title),
-                          message: Text("\(track.title) — \(track.artist)")) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-            } else {
-                ShareLink(item: "\(track.title) — \(track.artist)") {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
+            ShareLink(item: track.shareText, subject: Text(track.title)) {
+                Label("Share", systemImage: "square.and.arrow.up")
             }
             Divider()
             Button(role: .destructive) {

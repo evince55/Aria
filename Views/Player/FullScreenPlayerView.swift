@@ -318,24 +318,12 @@ struct FullScreenPlayerView: View {
             .accessibilityLabel("Playback speed")
             .accessibilityValue(speedLabel(playerManager.playbackRate))
 
-            // Share the actual song (watch URL), not the thumbnail image;
-            // local files fall back to a "title — artist" text share.
-            if let url = track.shareURL {
-                ShareLink(
-                    item: url,
-                    subject: Text(track.title),
-                    message: Text("\(track.title) — \(track.artist)")
-                ) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.title3)
-                        .foregroundColor(themeManager.textPrimary)
-                }
-            } else {
-                ShareLink(item: "\(track.title) — \(track.artist)") {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.title3)
-                        .foregroundColor(themeManager.textPrimary)
-                }
+            // Share the song's name, not the thumbnail image. See
+            // `Track.shareText` for why this is never a URL.
+            ShareLink(item: track.shareText, subject: Text(track.title)) {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.title3)
+                    .foregroundColor(themeManager.textPrimary)
             }
         }
         .padding(.bottom, DS.Spacing.xxl)

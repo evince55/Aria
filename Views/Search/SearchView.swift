@@ -1,11 +1,16 @@
 import SwiftUI
 
-/// Which index a search query runs against: the global YouTube catalog
-/// (`/api/search`) or the user's own synced library (`/api/library/query`).
-/// The Library scope only appears when `LibrarySearchManager.scopeAvailable`
-/// says the backend supports it (see the gating rules on that manager).
+/// Which index a search query runs against: everything the configured server
+/// can find (`/api/search`) or the user's own synced library
+/// (`/api/library/query`). The Library scope only appears when
+/// `LibrarySearchManager.scopeAvailable` says the backend supports it (see the
+/// gating rules on that manager).
+///
+/// The raw values are user-facing segment labels, so they name neither the
+/// backend nor its upstream source — the same picker serves Aria's backend and
+/// a Subsonic server.
 enum SearchScope: String, CaseIterable {
-    case youtube = "YouTube"
+    case catalog = "Catalog"
     case library = "Library"
 }
 
@@ -19,7 +24,7 @@ struct SearchView: View {
 
     @State private var query = ""
     @State private var results: Loadable<[Track]> = .idle
-    @State private var scope: SearchScope = .youtube
+    @State private var scope: SearchScope = .catalog
     /// The query whose library results are on screen — the default name for
     /// "Save as playlist".
     @State private var activeLibraryQuery = ""
@@ -72,7 +77,7 @@ struct SearchView: View {
             .onChange(of: librarySearchManager.scopeAvailable) { available in
                 // The scope can disappear mid-session (URL cleared, backend
                 // downgraded); never strand the picker on a hidden scope.
-                if !available, scope == .library { scope = .youtube }
+                if !available, scope == .library { scope = .catalog }
             }
             .toolbar {
                 if scope == .library,
