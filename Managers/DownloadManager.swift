@@ -17,7 +17,7 @@ final class DownloadManager: ObservableObject {
     /// `SchemaStore.loadItems` ignores the version and the field is optional).
     static let schemaVersion = 2
 
-    /// Downloaded tracks, newest first. Drives the Library "YouTube Downloads" section.
+    /// Downloaded tracks, newest first. Drives the Library "Downloads" section.
     @Published private(set) var records: [DownloadRecord] = []
     /// Video ids with an in-flight download.
     @Published private(set) var active: Set<String> = []

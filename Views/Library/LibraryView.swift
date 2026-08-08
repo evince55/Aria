@@ -23,7 +23,7 @@ struct LibraryView: View {
 
     enum LibraryTab: String, CaseIterable {
         case offlineTracks = "Offline Tracks"
-        case youtubeDownloads = "Downloads"
+        case downloads = "Downloads"
     }
 
     @AppStorage("librarySortOrder") private var sortOrderRaw: String = LibrarySortOrder.recentlyAdded.rawValue
@@ -61,7 +61,7 @@ struct LibraryView: View {
 
                     switch selectedTab {
                     case .offlineTracks: offlineTracksContent
-                    case .youtubeDownloads: downloadsContent
+                    case .downloads: downloadsContent
                     }
                 }
             }
@@ -666,7 +666,7 @@ struct LibraryView: View {
         switch selectedTab {
         case .offlineTracks:
             playAll()
-        case .youtubeDownloads:
+        case .downloads:
             let tracks = filteredDownloads.map(\.asTrack)
             guard !tracks.isEmpty else { return }
             playerManager.playSlice(tracks, startIndex: 0)
