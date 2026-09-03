@@ -26,7 +26,8 @@ final class LibrarySearchManagerTests: XCTestCase {
     }
 
     private func configure(_ manager: LibrarySearchManager,
-                           favorites: FavoritesManager) {
+                           favorites: FavoritesManager,
+                           settings: SettingsManager = SettingsManager()) {
         manager.configure(
             favorites: favorites,
             playlists: PlaylistsManager(store: InMemoryKeyValueStore()),
@@ -38,7 +39,7 @@ final class LibrarySearchManagerTests: XCTestCase {
                 playedStore: InMemoryKeyValueStore(),
                 addedStore: InMemoryKeyValueStore(),
                 statsStore: InMemoryKeyValueStore()),
-            settings: SettingsManager())
+            settings: settings)
     }
 
     /// Polls the main run loop until `condition` holds (the manager hops
@@ -222,7 +223,7 @@ final class LibrarySearchManagerTests: XCTestCase {
 
         // User clears the backend URL in Settings.
         currentBase = nil
-        manager.backendURLDidChange()
+        manager.backendURLDidChange(to: nil)
 
         try await waitUntil { session.recordedRequestObjects.contains { $0.httpMethod == "DELETE" } }
         let deleteRequest = try XCTUnwrap(
@@ -244,11 +245,137 @@ final class LibrarySearchManagerTests: XCTestCase {
         configure(manager, favorites: FavoritesManager(store: InMemoryKeyValueStore()))
         await manager.probeHealth() // records lastKnownBaseURL
 
-        manager.backendURLDidChange() // resolves to the same URL
+        manager.backendURLDidChange(to: "https://api.example") // same URL
 
         // Allow the async task to settle, then assert no DELETE went out.
         try await Task.sleep(nanoseconds: 100_000_000)
         XCTAssertFalse(session.recordedRequestObjects.contains { $0.httpMethod == "DELETE" })
+    }
+
+    // MARK: - Privacy: the FIRST URL-change event (QA defect, 2026-07-30)
+    //
+    // The `settings.$backendURLOverride` sink fires on Combine's willSet —
+    // BEFORE MoreView's onChange has persisted the new value to UserDefaults.
+    // A handler that synchronously re-reads the resolved base URL therefore
+    // still sees the OLD URL, concludes "old == new", and skips the remote
+    // DELETE at the old backend. These tests drive the change through a real
+    // `SettingsManager` publisher with a resolver that reads the settings
+    // property (same timing as UserDefaults: old during willSet delivery,
+    // new afterwards), reproducing the exact single-event edit QA observed.
+
+    private struct URLChangeFixture {
+        let session: MockURLSession
+        let settings: SettingsManager
+        let sync: LibrarySyncService
+        let manager: LibrarySearchManager
+    }
+
+    private func makeURLChangeFixture(initialURL: String) async throws -> URLChangeFixture {
+        let session = MockURLSession()
+        session.dataFromHandler = { url in
+            if url.path == "/api/health" {
+                return self.ok(#"{"library_index":{"tracks":1,"embedder":"ok"}}"#, for: url)
+            }
+            return self.ok(#"{"indexed":1,"skipped":0,"deleted":0}"#, for: url)
+        }
+        let settings = SettingsManager()
+        settings.backendURLOverride = initialURL
+        // Mirrors BackendConfig's UserDefaults-backed read: during a willSet
+        // emission this still returns the OLD value.
+        let resolve: () -> String? = { [weak settings] in
+            BackendConfig.normalize(settings?.backendURLOverride)
+        }
+        let sync = LibrarySyncService(
+            store: InMemoryKeyValueStore(), session: session,
+            resolveBaseURL: resolve, resolveAPIKey: { nil })
+        // The override resolver is injected (plain normalize, no Bundle
+        // lookup) so these tests stay hermetic on a real-IP device worktree;
+        // a short debounce keeps them fast.
+        let manager = LibrarySearchManager(
+            syncService: sync, session: session,
+            resolveBaseURL: resolve, resolveAPIKey: { nil },
+            resolveBaseURLForOverride: { BackendConfig.normalize($0) },
+            urlChangeDebounce: 0.15)
+        configure(manager, favorites: FavoritesManager(store: InMemoryKeyValueStore()),
+                  settings: settings)
+
+        // Seed synced state living at the old backend.
+        try await sync.sync(snapshot: [LibraryTrackDoc(
+            trackID: "yt1", title: "Song", artist: "A", album: nil, genre: nil,
+            duration: nil, playlists: [], affinity: [])])
+        XCTAssertFalse(sync.syncedHashes.isEmpty)
+        return URLChangeFixture(
+            session: session, settings: settings, sync: sync, manager: manager)
+    }
+
+    private func recordedDeletes(_ session: MockURLSession) -> [URLRequest] {
+        session.recordedRequestObjects.filter { $0.httpMethod == "DELETE" }
+    }
+
+    /// (a) A single change event (select-all + paste) must fire exactly one
+    /// DELETE at the OLD base URL and reset local synced state.
+    func test_firstURLChangeEvent_firesExactlyOneDeleteAtOldURL() async throws {
+        let fixture = try await makeURLChangeFixture(initialURL: "https://old.example")
+
+        fixture.settings.backendURLOverride = "https://new.example" // ONE event
+        try await waitUntil { !self.recordedDeletes(fixture.session).isEmpty }
+        try await Task.sleep(nanoseconds: 300_000_000) // let trailing work settle
+
+        let deletes = recordedDeletes(fixture.session)
+        XCTAssertEqual(deletes.count, 1, "exactly one DELETE per actual change")
+        XCTAssertEqual(deletes.first?.url?.host, "old.example",
+                       "DELETE must target the OLD backend")
+        XCTAssertEqual(deletes.first?.url?.path, "/api/library")
+        XCTAssertTrue(fixture.sync.syncedHashes.isEmpty, "local state must reset")
+    }
+
+    /// (b) Clearing the field (change-to-empty) is also a single event and
+    /// must fire the DELETE at the old backend.
+    func test_URLClearedInOneEvent_firesDeleteAtOldURL() async throws {
+        let fixture = try await makeURLChangeFixture(initialURL: "https://old.example")
+
+        fixture.settings.backendURLOverride = "" // ONE event: field cleared
+        try await waitUntil { !self.recordedDeletes(fixture.session).isEmpty }
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let deletes = recordedDeletes(fixture.session)
+        XCTAssertEqual(deletes.count, 1)
+        XCTAssertEqual(deletes.first?.url?.host, "old.example")
+        XCTAssertTrue(fixture.sync.syncedHashes.isEmpty)
+        XCTAssertFalse(fixture.manager.scopeAvailable)
+    }
+
+    /// (c) Re-emitting the same value is not a change: no DELETE, and the
+    /// local synced state must be kept (the pipeline must not reset on no-ops).
+    func test_sameURLReemitted_firesNothingAndKeepsState() async throws {
+        let fixture = try await makeURLChangeFixture(initialURL: "https://old.example")
+
+        fixture.settings.backendURLOverride = "https://old.example" // no-op
+        try await Task.sleep(nanoseconds: 900_000_000) // past any debounce
+
+        XCTAssertTrue(recordedDeletes(fixture.session).isEmpty)
+        XCTAssertFalse(fixture.sync.syncedHashes.isEmpty,
+                       "a no-op event must not clear synced state")
+    }
+
+    /// (d) Rapid successive edits (per-keystroke publisher events) must
+    /// coalesce into exactly one DELETE aimed at the ORIGINAL old URL — not
+    /// at intermediate keystroke values.
+    func test_rapidEdits_fireExactlyOneDeleteAtOriginalOldURL() async throws {
+        let fixture = try await makeURLChangeFixture(initialURL: "https://old.example")
+
+        fixture.settings.backendURLOverride = "https://n"
+        fixture.settings.backendURLOverride = "https://new.exam"
+        fixture.settings.backendURLOverride = "https://new.example"
+        try await waitUntil { !self.recordedDeletes(fixture.session).isEmpty }
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let deletes = recordedDeletes(fixture.session)
+        XCTAssertEqual(deletes.count, 1,
+                       "rapid edits must coalesce to one DELETE")
+        XCTAssertEqual(deletes.first?.url?.host, "old.example",
+                       "the DELETE must target the original old URL, not an intermediate keystroke value")
+        XCTAssertTrue(fixture.sync.syncedHashes.isEmpty)
     }
 }
 

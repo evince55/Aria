@@ -74,22 +74,6 @@ struct SearchView: View {
                 // downgraded); never strand the picker on a hidden scope.
                 if !available, scope == .library { scope = .youtube }
             }
-            .toolbar {
-                if scope == .library,
-                   let tracks = librarySearchManager.results.value,
-                   !tracks.isEmpty {
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button {
-                            Haptics.success()
-                            let name = activeLibraryQuery.isEmpty ? "Library Search" : activeLibraryQuery
-                            playlistsManager.create(name: name, tracks: tracks)
-                            savedPlaylistName = name
-                        } label: {
-                            Label("Save as playlist", systemImage: "text.badge.plus")
-                        }
-                    }
-                }
-            }
             .alert(
                 "Saved as playlist",
                 isPresented: Binding(
@@ -148,7 +132,7 @@ struct SearchView: View {
             libraryIdleHint
         case .loading:
             if let cached = librarySearchManager.results.value, !cached.isEmpty {
-                libraryResultsList(cached)
+                libraryResults(cached)
             } else {
                 searchLoadingView
             }
@@ -156,10 +140,49 @@ struct SearchView: View {
             if tracks.isEmpty {
                 libraryEmptyResultsView
             } else {
-                libraryResultsList(tracks)
+                libraryResults(tracks)
             }
         case .failed(let error):
             searchErrorView(error)
+        }
+    }
+
+    /// Default playlist name for "Save as playlist": the query that produced
+    /// the on-screen results, falling back when it is somehow empty.
+    /// Static + pure so the action's naming is unit-testable.
+    static func libraryPlaylistName(forQuery query: String) -> String {
+        query.isEmpty ? "Library Search" : query
+    }
+
+    /// Header + list. "Save as playlist" lives in this in-content header, NOT
+    /// in the navigation bar: with `.searchable(.navigationBarDrawer)` the
+    /// active search session's Cancel button owns the trailing toolbar slot
+    /// (iOS 26 confirmed), and library results only exist while search text
+    /// is present — a `navigationBarTrailing` item would never render.
+    /// Mirrors the "Recent searches / Clear" header pattern above.
+    private func libraryResults(_ tracks: [Track]) -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                SectionLabel(
+                    title: tracks.count == 1 ? "1 result" : "\(tracks.count) results",
+                    tokens: tokens)
+                Spacer()
+                Button {
+                    Haptics.success()
+                    let name = Self.libraryPlaylistName(forQuery: activeLibraryQuery)
+                    playlistsManager.create(name: name, tracks: tracks)
+                    savedPlaylistName = name
+                } label: {
+                    Label("Save as playlist", systemImage: "text.badge.plus")
+                        .font(DS.Typography.captionStrong)
+                        .foregroundColor(tokens.accent)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, DS.Spacing.lg)
+            .padding(.vertical, DS.Spacing.sm)
+
+            libraryResultsList(tracks)
         }
     }
 
