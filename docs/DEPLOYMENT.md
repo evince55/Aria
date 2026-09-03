@@ -91,8 +91,11 @@ configurations.
 
 - [ ] Bundle ID changed + App ID registered (B1.2)
 - [ ] `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` bumped as needed
-- [ ] Archive uses Release config (hardened plist — verify no
-      `NSAllowsArbitraryLoads` in the built product's Info.plist)
+- [ ] `scripts/verify-release.sh` exits 0 — builds Release and asserts on the
+      *built* Info.plist: no ATS bypass or exception domains, empty
+      `ARIA_BACKEND_URL`, placeholder homelab host, no API key, export
+      compliance answered, iPhone-only, privacy manifest bundled, real
+      bundle ID, version fields present
 - [ ] Privacy manifest present in bundle (`PrivacyInfo.xcprivacy`) — App Store
       Connect **App Privacy** answers must match it: *Search History* and
       *Product Interaction*, purpose **App Functionality**, **not** linked to
@@ -103,9 +106,13 @@ configurations.
 - [ ] Privacy policy URL (required because the app transmits search text to a
       server — a one-pager stating queries go to *your own configured server*
       and nothing is collected by the developer suffices)
-- [ ] Review notes: explain the self-hosted-server model (B3), state that the
-      app is fully functional as a local-file player without a server, and do
-      **not** ship or link a demo YouTube-proxy server
+- [ ] Review notes (`docs/store/review-notes.md`): explain the self-hosted-server
+      model (B3), state that the app is fully functional as a local-file player
+      without a server, and point the reviewer at the **public Navidrome demo**
+      (`https://demo.navidrome.org`, user `demo`, password `demo`) so the
+      Subsonic path can be exercised — it's a third-party demo of an open-source
+      server, not anything the developer operates. Do **not** ship or link a
+      YouTube-proxy server
 
 ### B3. The honest review-risk assessment
 

@@ -94,6 +94,7 @@ struct AriaApp: App {
         case .search:    return .search
         case .more:      return .more
         case .favorites: return .favorites
+        case .library:   return .library
         }
     }
 }

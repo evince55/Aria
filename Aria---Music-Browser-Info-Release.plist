@@ -11,18 +11,6 @@
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
-		<key>NSExceptionDomains</key>
-		<dict>
-			<!-- yt-dlp-resolved audio streams; kept scoped in case a CDN edge
-			     serves plain HTTP. -->
-			<key>googlevideo.com</key>
-			<dict>
-				<key>NSExceptionAllowsInsecureHTTPLoads</key>
-				<true/>
-				<key>NSIncludesSubdomains</key>
-				<true/>
-			</dict>
-		</dict>
 	</dict>
 	<key>ARIA_HOMELAB_HOST</key>
 	<string>192.0.2.1</string>

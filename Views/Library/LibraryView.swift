@@ -279,7 +279,7 @@ struct LibraryView: View {
             Text("No files yet")
                 .font(.title3)
                 .foregroundColor(tokens.textPrimary)
-            Text("Import FLAC, MP3, or other audio files from the Files app to play them with EQ.")
+            Text("Import FLAC, MP3, or other audio files from the Files app, or connect your own music server under More → Backend.")
                 .font(.callout)
                 .foregroundColor(tokens.textSecondary)
                 .multilineTextAlignment(.center)

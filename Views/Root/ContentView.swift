@@ -123,6 +123,7 @@ struct ContentView: View {
             case .search:    selectedTab = searchAvailable ? .search : .library
             case .more:      selectedTab = .more
             case .favorites: selectedTab = .favorites
+            case .library:   selectedTab = .library
             }
         }
         .onChange(of: settingsManager.isServerConfigured) { configured in
