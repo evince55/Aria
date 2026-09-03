@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aria — Support</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { max-width: 42rem; margin: 3rem auto; padding: 0 1.25rem; font: 17px/1.55 -apple-system, system-ui, sans-serif; }
+  h1 { font-size: 1.75rem; margin-bottom: .25rem; }
+  h2 { font-size: 1.15rem; margin-top: 2rem; }
+  details { margin: .6rem 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  code { font-size: .95em; }
+</style>
+</head>
+<body>
+<h1>Aria — Support</h1>
+<p>Aria is a music player for your own files and your own music server.</p>
+
+<h2>Getting started</h2>
+<details open>
+<summary>How do I add music?</summary>
+<p>Library tab → <strong>Import</strong>. Pick files from the Files app — FLAC, ALAC, AIFF, WAV, MP3 and AAC all work. Aria Pro also imports whole folders and M3U playlists.</p>
+</details>
+<details>
+<summary>How do I connect my server?</summary>
+<p>More → Backend. Choose <strong>Subsonic</strong> for Navidrome, Airsonic, Gonic, Astiga or any Subsonic-compatible server, enter its address (the server root, not <code>/rest</code>), your username and password, then tap <strong>Test Connection</strong>. The Search tab appears once a server is configured.</p>
+</details>
+<details>
+<summary>Test Connection fails with "Wrong username or password"</summary>
+<p>The server rejected the login. Check the username and password in your server's own web interface first. Some servers require a Subsonic-specific password — Navidrome uses your normal one.</p>
+</details>
+<details>
+<summary>Test Connection says the response wasn't valid Subsonic JSON</summary>
+<p>The URL is probably pointing at a web page rather than the server root. Use just the scheme and host, e.g. <code>https://music.example.com</code>, without <code>/rest</code> or <code>/app</code>.</p>
+</details>
+<details>
+<summary>My server is plain http:// and Aria can't reach it</summary>
+<p>iOS blocks unencrypted connections except to local-network addresses. Servers on <code>.local</code> names or local hostnames work; a server reached over the internet needs HTTPS. Putting it behind a reverse proxy with a certificate, or a tunnel, is the usual fix.</p>
+</details>
+
+<h2>Sound</h2>
+<details>
+<summary>How do I use AutoEQ?</summary>
+<p>Player → EQ → <strong>AutoEQ Profile</strong>. Search for your headphones and apply the measured correction. Save it as a profile to switch between headphones later. Requires Aria Pro.</p>
+</details>
+<details>
+<summary>Does Aria do bit-perfect output to a USB DAC?</summary>
+<p>No. iOS mixes all audio through a fixed-rate system mixer; Aria matches the mixer to 44.1 or 48 kHz families but cannot bypass it. This is a platform limit, not an Aria setting.</p>
+</details>
+
+<h2>Purchases</h2>
+<details>
+<summary>I bought Aria Pro on another device</summary>
+<p>More → Aria Pro → <strong>Restore Purchases</strong>. Purchases are tied to your Apple ID.</p>
+</details>
+
+<h2>Contact</h2>
+<p><a href="mailto:aria@chai-homelab.com">aria@chai-homelab.com</a>. Bug reports and feature requests are also welcome at <a href="https://github.com/evince55/Aria/issues">github.com/evince55/Aria/issues</a>.</p>
+
+<p><a href="/aria/privacy">Privacy policy</a></p>
+</body>
+</html>
