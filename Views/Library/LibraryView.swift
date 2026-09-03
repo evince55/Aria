@@ -10,9 +10,13 @@ struct LibraryView: View {
     @EnvironmentObject private var downloadManager: DownloadManager
     @EnvironmentObject private var proStore: ProStore
 
+    /// One `.fileImporter` for all three import kinds. Stacking three of
+    /// them on the same view is a SwiftUI trap: only the last one presents,
+    /// so plain "Import Files…" silently did nothing from the day folder and
+    /// M3U import were added (06ebed1). `importKind` picks the content types
+    /// and handler at presentation time.
     @State private var isImporting = false
-    @State private var isImportingFolder = false
-    @State private var isImportingM3U = false
+    @State private var importKind: LibraryImportKind = .files
     @State private var importError: String?
     @State private var importProgress: FolderImporter.Progress?
     @State private var importSummary: String?
@@ -106,18 +110,18 @@ struct LibraryView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
-                            isImporting = true
+                            beginImport(.files)
                         } label: {
                             Label("Import Files…", systemImage: "doc.badge.plus")
                         }
                         Button {
-                            if proStore.isPro { isImportingFolder = true } else { showPaywall = true }
+                            if proStore.isPro { beginImport(.folder) } else { showPaywall = true }
                         } label: {
                             Label(proStore.isPro ? "Import Folder…" : "Import Folder… (Pro)",
                                   systemImage: proStore.isPro ? "folder.badge.plus" : "lock.fill")
                         }
                         Button {
-                            if proStore.isPro { isImportingM3U = true } else { showPaywall = true }
+                            if proStore.isPro { beginImport(.m3u) } else { showPaywall = true }
                         } label: {
                             Label(proStore.isPro ? "Import M3U Playlist…" : "Import M3U Playlist… (Pro)",
                                   systemImage: proStore.isPro ? "list.bullet.rectangle" : "lock.fill")
@@ -131,36 +135,16 @@ struct LibraryView: View {
         }
         .fileImporter(
             isPresented: $isImporting,
-            allowedContentTypes: [.audio],
-            allowsMultipleSelection: true
+            allowedContentTypes: importKind.contentTypes,
+            allowsMultipleSelection: importKind.allowsMultipleSelection
         ) { result in
             switch result {
             case .success(let urls):
-                Task { await importURLs(urls) }
-            case .failure(let error):
-                importError = error.localizedDescription
-            }
-        }
-        .fileImporter(
-            isPresented: $isImportingFolder,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                if let folder = urls.first { Task { await importFolder(folder) } }
-            case .failure(let error):
-                importError = error.localizedDescription
-            }
-        }
-        .fileImporter(
-            isPresented: $isImportingM3U,
-            allowedContentTypes: [.m3uPlaylist, .plainText],
-            allowsMultipleSelection: false
-        ) { result in
-            switch result {
-            case .success(let urls):
-                if let url = urls.first { importM3U(url) }
+                switch importKind {
+                case .files:  Task { await importURLs(urls) }
+                case .folder: if let folder = urls.first { Task { await importFolder(folder) } }
+                case .m3u:    if let url = urls.first { importM3U(url) }
+                }
             case .failure(let error):
                 importError = error.localizedDescription
             }
@@ -285,7 +269,7 @@ struct LibraryView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
             Button {
-                isImporting = true
+                beginImport(.files)
             } label: {
                 Label("Import", systemImage: "plus")
                     .padding(.horizontal, 16)
@@ -494,6 +478,11 @@ struct LibraryView: View {
     /// Bulk-imports a picked folder (recursively). Per-file failures are
     /// counted as skipped rather than aborting — one unsupported file in a
     /// 500-track folder must not kill the run.
+    private func beginImport(_ kind: LibraryImportKind) {
+        importKind = kind
+        isImporting = true
+    }
+
     private func importFolder(_ folder: URL) async {
         let result = await FolderImporter.importAll(
             from: folder,
@@ -680,4 +669,20 @@ struct LibraryView: View {
     private func isCurrentTrack(_ track: LocalTrack) -> Bool {
         playerManager.currentTrack?.id == "local:\(track.id.uuidString)"
     }
+}
+
+/// What the Library's single `.fileImporter` is being asked for. Internal
+/// (not private) so the content-type mapping can be unit-tested.
+enum LibraryImportKind {
+    case files, folder, m3u
+
+    var contentTypes: [UTType] {
+        switch self {
+        case .files:  return [.audio]
+        case .folder: return [.folder]
+        case .m3u:    return [.m3uPlaylist, .plainText]
+        }
+    }
+
+    var allowsMultipleSelection: Bool { self == .files }
 }
