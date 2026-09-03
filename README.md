@@ -77,16 +77,86 @@ Managers own their long-lived state (no shared globals); services
 (EQCache, StreamResolver, NowPlayingService) are owned by their
 respective managers.
 
-## Build
+## Build it yourself
 
-Open `Aria.xcodeproj` in Xcode 26.5+ and run the `Aria - Music Browser`
-scheme on an iOS 16.6+ simulator or device.
+Aria is MIT-licensed and there's no App Store build yet, so the way to get
+it on your phone today is to build it. **You need a Mac** — Xcode is
+macOS-only and there is no way around that.
 
-CLI build:
+Try it with no Apple ID and no phone at all:
 
 ```sh
-xcodebuildmcp build_sim --scheme "Aria - Music Browser"
+make sim
 ```
+
+Put it on your own iPhone:
+
+```sh
+make doctor    # tells you exactly what's missing, if anything
+make install
+```
+
+That's it. `make` figures out your Team ID, picks a bundle ID nobody else
+can be holding, provisions, builds, and installs over the cable. Plug the
+phone in, unlock it, tap **Trust**, and run it.
+
+### What you need
+
+- **A Mac** with **Xcode 26.5+** (App Store, ~15 GB). Then
+  `sudo xcode-select -s /Applications/Xcode.app`.
+- **An Apple ID** — a free one is fine. Add it in Xcode → Settings →
+  Accounts, then open `Aria.xcodeproj` once and pick your team under
+  Signing & Capabilities. `make sim` doesn't need this.
+- **An iPhone on iOS 16.6+**, for `make install`.
+
+### The 7-day thing — read this before you start
+
+**If you sign with a free Apple ID, the app stops launching after 7 days.**
+Not the download, not the build: the installed app itself refuses to open
+until you plug back into your Mac and re-run `make install`. Your music,
+playlists, and settings survive; only the signature expires.
+
+This is Apple's limit on free provisioning, not Aria's, and every
+sideloaded iOS app has it. A paid Apple Developer account ($99/yr) raises
+it to a year. If a weekly rebuild sounds like more than you signed up for,
+that's a completely reasonable place to stop — watch the repo for a
+TestFlight link instead.
+
+Free provisioning also can't grant the CarPlay entitlement, so a
+self-built copy won't have CarPlay even once it ships.
+
+### Overrides
+
+Everything auto-detects, but nothing is mandatory:
+
+```sh
+make install TEAM=ABCDE12345 BUNDLE_ID=com.you.aria DEVICE=<udid>
+make sim SIM="iPhone 17 Pro"
+```
+
+The committed `DEVELOPMENT_TEAM` is the maintainer's, and the committed
+bundle ID is already registered — building through `make` overrides both,
+which is the whole reason it exists. Opening the project in Xcode and
+hitting Run instead will fail signing until you change them by hand.
+
+### After it's installed
+
+Aria starts as a **local-file player with no server configured** — import
+some FLACs from the Files app and you're done. If you self-host, point it
+at your server under **More → Backend**: pick Subsonic for
+Navidrome/Airsonic/Gonic, or Aria Backend if you deployed
+[`backend/`](backend/) yourself.
+
+One thing to know about plain HTTP: `make install` builds **Release**,
+which uses `Aria---Music-Browser-Info-Release.plist`. That plist has **no
+blanket ATS bypass** — its only relevant key is `NSAllowsLocalNetworking`.
+The Debug plist does have one (`NSAllowsArbitraryLoads`), so a server that
+works when you run from Xcode can still be refused by a `make install`
+build.
+
+HTTPS always works. If your server is plain `http://` and Aria can't reach
+it, add an `NSExceptionDomains` entry for its host (see
+[ATS / TLS](#ats--tls)) or put it behind TLS.
 
 ## Deployment
 
@@ -100,7 +170,7 @@ required.
 ## Test
 
 ```sh
-xcodebuildmcp test_sim --scheme AriaTests
+make test
 ```
 
 432 tests across 46 files in `AriaTests`, plus 149 backend tests
@@ -164,15 +234,26 @@ feature runs lexical-only.
 
 ### Backend URL
 
-`PlayerManager.backendURL` resolves at launch in this order:
+`Services/BackendConfig.swift` owns this. It is resolved **per read**, not
+frozen at launch, so a change in Settings applies without a restart:
 
-1. `Bundle.main.object(forInfoDictionaryKey: "ARIA_BACKEND_URL")` — set
-   the `ARIA_BACKEND_URL` key in `Aria---Music-Browser-Info.plist` (or
-   a build-config override) to point at your backend.
-2. **DEBUG build** — falls back to the dev-backend URL, built from
-   `ARIA_HOMELAB_HOST` in Info.plist (see "Dev homelab setup" below).
-3. **Release build** — falls back to the public Render URL
-   `https://aria-backend-px9s.onrender.com`.
+1. The in-app override — **More → Backend**, stored in `UserDefaults`.
+   This is how a self-built copy is meant to be pointed at a server; no
+   source edit needed.
+2. The `ARIA_BACKEND_URL` Info.plist key.
+3. `http://<ARIA_HOMELAB_HOST>:8000` (see "Dev homelab setup" below).
+
+Both plists ship `ARIA_BACKEND_URL` empty and `ARIA_HOMELAB_HOST` set to
+the RFC 5737 placeholder `192.0.2.1`, so a fresh build talks to **no
+server at all** and runs as a local-files-only player — the Search tab
+hides until you configure one. It cannot phone home to anyone else's
+backend.
+
+`BackendConfig.serverKind` picks the protocol: `aria` for the yt-dlp
+backend in [`backend/`](backend/), `subsonic` for any Subsonic-compatible
+server. Subsonic additionally needs a username and password; the password
+is held in the Keychain, never `UserDefaults`, and is never transmitted
+(Aria sends a salted MD5 token).
 
 ### Dev homelab setup
 
@@ -320,6 +401,10 @@ Audio files are gitignored so the repo doesn't bloat and so you
 don't accidentally commit licensed content.
 
 ## Building for your device (with your Tailscale homelab)
+
+> Maintainer-specific. If you just want Aria on your phone, use
+> [Build it yourself](#build-it-yourself) and set your server in-app under
+> More → Backend — you do not need any of this.
 
 The GitHub source ships with `ARIA_HOMELAB_HOST = 192.0.2.1` (the
 RFC 5737 placeholder). To run the app on your phone against your
