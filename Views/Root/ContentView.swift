@@ -37,9 +37,12 @@ struct ContentView: View {
         }
     }
 
-    /// Search (YouTube streaming) needs a configured backend; without one the
-    /// app runs as a local-files player and the Search tab hides entirely.
-    private var searchAvailable: Bool { BackendConfig.isConfigured }
+    /// Search needs a configured server — Aria's backend or a Subsonic one
+    /// with credentials. Without one the app runs as a local-files player and
+    /// the Search tab hides entirely. Read from `settingsManager`, not
+    /// `BackendConfig`, so the tab appears/disappears in the same pass as the
+    /// edit that caused it (see `SettingsManager.isServerConfigured`).
+    private var searchAvailable: Bool { settingsManager.isServerConfigured }
 
     init(initialTab: AppTab = .favorites) {
         // A start tab pointing at the (hidden) Search tab falls back to
@@ -122,9 +125,11 @@ struct ContentView: View {
             case .favorites: selectedTab = .favorites
             }
         }
-        .onChange(of: settingsManager.backendURLOverride) { _ in
-            // Clearing the server while on Search would strand a hidden tab.
-            if !searchAvailable, selectedTab == .search { selectedTab = .library }
+        .onChange(of: settingsManager.isServerConfigured) { configured in
+            // Losing the server while on Search would strand a hidden tab.
+            // Watching the derived flag covers every input that feeds it —
+            // URL, server type, and Subsonic credentials.
+            if !configured, selectedTab == .search { selectedTab = .library }
         }
         .onChange(of: scenePhase) { newPhase in
             if newPhase == .background || newPhase == .inactive {

@@ -1,6 +1,6 @@
 import Foundation
 
-final class YouTubeSearchService {
+final class YouTubeSearchService: MusicSearching, @unchecked Sendable {
     let backendURL: String
     let apiKey: String?
 
