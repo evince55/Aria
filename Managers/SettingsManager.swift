@@ -2,6 +2,7 @@ import Foundation
 import Combine
 
 enum DefaultStartTab: String, CaseIterable {
+    case library = "Library"
     case favorites = "Favorites"
     case playlists = "Playlists"
     case search = "Search"
@@ -30,7 +31,9 @@ enum SleepTimerDuration: String, CaseIterable {
 }
 
 final class SettingsManager: ObservableObject {
-    @Published var defaultStartTab: DefaultStartTab = .favorites
+    /// Library, not Favorites: a first-run user has no favorites and needs
+    /// the Import button in front of them. A saved choice still wins (`load()`).
+    @Published var defaultStartTab: DefaultStartTab = .library
     @Published var isDarkMode: Bool = true
     @Published var selectedThemeID: String = "blue"
     @Published var sleepTimer: SleepTimerDuration = .off
