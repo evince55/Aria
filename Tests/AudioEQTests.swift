@@ -40,6 +40,32 @@ final class AudioEQTests: XCTestCase {
         makeBuffer(frames: frames) { _, f in sinf(2 * .pi * hz * Float(f) / 44100) * 0.5 }
     }
 
+    /// Issue #73: the EQ hard-coded MaximumFramesPerSlice = 8192, but the tap's
+    /// prepare callback reports the real maximum and iOS can exceed 8192 (8208
+    /// was observed). Rendering more than the cap fails with
+    /// kAudioUnitErr_TooManyFramesToProcess — and the tap ignored the failure,
+    /// so that slice played un-EQ'd. The cap must come from the caller.
+    func test_rendersSlicesLargerThan8192_whenPreparedWithThatMaximum() throws {
+        let frames: AVAudioFrameCount = 8208
+        let eq = AudioEQ()
+        try eq.prepare(format: format.streamDescription.pointee,
+                       frequencies: PlayerManager.eqFrequencies,
+                       maximumFrames: frames)
+
+        let out = try render(eq, sine(1000, frames: frames))  // asserts noErr
+        let p = out.floatChannelData![0]
+        XCTAssertTrue((0..<Int(frames)).allSatisfy { p[$0].isFinite })
+    }
+
+    func test_maximumFramesNeverDropsBelowTheOldFloor() throws {
+        // A caller reporting a tiny maximum must not shrink the cap below 8192.
+        let eq = AudioEQ()
+        try eq.prepare(format: format.streamDescription.pointee,
+                       frequencies: PlayerManager.eqFrequencies,
+                       maximumFrames: 512)
+        _ = try render(eq, sine(1000, frames: 4096))  // asserts noErr
+    }
+
     func test_flatEQ_rendersFiniteAudioAndPreservesEnergy() throws {
         let eq = AudioEQ()
         try eq.prepare(format: format.streamDescription.pointee,

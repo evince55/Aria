@@ -81,8 +81,9 @@ final class AudioEQTap {
 
     // MARK: - Callback hooks (audio thread)
 
-    fileprivate func prepare(format: AudioStreamBasicDescription) {
-        try? eq.prepare(format: format, frequencies: frequencies)
+    fileprivate func prepare(format: AudioStreamBasicDescription, maximumFrames: CMItemCount) {
+        try? eq.prepare(format: format, frequencies: frequencies,
+                        maximumFrames: AVAudioFrameCount(clamping: maximumFrames))
         if let preset = initialParametric {
             eq.applyParametric(preset)
         } else {
@@ -130,8 +131,9 @@ private let tapFinalize: MTAudioProcessingTapFinalizeCallback = { tap in
     Unmanaged<AudioEQTap>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release()
 }
 
-private let tapPrepare: MTAudioProcessingTapPrepareCallback = { tap, _, format in
-    context(tap).prepare(format: format.pointee)
+private let tapPrepare: MTAudioProcessingTapPrepareCallback = { tap, maxFrames, format in
+    // `maxFrames` is the largest slice `process` will be handed (issue #73).
+    context(tap).prepare(format: format.pointee, maximumFrames: maxFrames)
 }
 
 private let tapUnprepare: MTAudioProcessingTapUnprepareCallback = { tap in
