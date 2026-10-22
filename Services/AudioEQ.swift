@@ -35,9 +35,18 @@ final class AudioEQ {
 
     // MARK: - Lifecycle
 
+    /// Smallest render-slice cap ever configured, whatever the caller reports.
+    static let minimumFramesPerSlice: AVAudioFrameCount = 8192
+
     /// Creates and initialises the N-Band EQ for `format`, configuring each band
     /// at `frequencies[i]` with flat (0 dB) gain.
-    func prepare(format: AudioStreamBasicDescription, frequencies: [Float]) throws {
+    ///
+    /// `maximumFrames` is the largest slice the host will ask `process` to
+    /// render — the tap's prepare callback supplies it. It is floored at
+    /// `minimumFramesPerSlice`: a larger cap only costs a little buffer memory,
+    /// while a smaller one makes AudioUnitRender fail mid-playback.
+    func prepare(format: AudioStreamBasicDescription, frequencies: [Float],
+                 maximumFrames: AVAudioFrameCount = AudioEQ.minimumFramesPerSlice) throws {
         precondition(frequencies.count == Self.bandCount)
 
         var desc = AudioComponentDescription(
@@ -65,9 +74,10 @@ final class AudioEQ {
             try check(AudioUnitSetProperty(au, kAudioUnitProperty_StreamFormat,
                                            kAudioUnitScope_Output, 0, &fmt, fmtSize))
 
-            // Render slices can be large; raise the cap or AudioUnitRender fails
-            // with kAudioUnitErr_TooManyFramesToProcess. Must be set before init.
-            var maxFrames = UInt32(8192)
+            // AudioUnitRender fails with kAudioUnitErr_TooManyFramesToProcess on
+            // any slice above this cap, so it must cover the host's real maximum
+            // (iOS has been seen asking for 8208). Must be set before init.
+            var maxFrames = UInt32(max(maximumFrames, Self.minimumFramesPerSlice))
             try check(AudioUnitSetProperty(au, kAudioUnitProperty_MaximumFramesPerSlice,
                                            kAudioUnitScope_Global, 0,
                                            &maxFrames, UInt32(MemoryLayout<UInt32>.size)))

@@ -19,6 +19,9 @@ struct AutoEQBrowserView: View {
     @StateObject private var catalog = AutoEQCatalog()
     @State private var query = ""
     @State private var formFactor: AutoEQCatalogEntry.FormFactor?
+    /// Last completed filter result. `nil` until the first one lands, in which
+    /// case the unfiltered catalog shows (the initial query matches everything).
+    @State private var filtered: [AutoEQCatalogEntry]?
     @State private var fetchingID: String?
     @State private var fetchError: String?
 
@@ -84,11 +87,18 @@ struct AutoEQBrowserView: View {
         }
     }
 
+    /// What a filter run depends on. A change cancels the in-flight run.
+    private struct FilterKey: Equatable {
+        let query: String
+        let formFactor: AutoEQCatalogEntry.FormFactor?
+        let catalogCount: Int
+    }
+
     private func catalogList(_ entries: [AutoEQCatalogEntry]) -> some View {
-        let filtered = AutoEQCatalog.filter(entries, query: query, formFactor: formFactor)
+        let visible = filtered ?? entries
         return VStack(spacing: 0) {
             formFactorPicker
-            if filtered.isEmpty {
+            if visible.isEmpty {
                 VStack(spacing: DS.Spacing.sm) {
                     Text("No matches")
                         .font(DS.Typography.titleMedium)
@@ -100,7 +110,7 @@ struct AutoEQBrowserView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(filtered) { entry in
+                    ForEach(visible) { entry in
                         row(entry)
                             .listRowBackground(Color.clear)
                     }
@@ -112,6 +122,20 @@ struct AutoEQBrowserView: View {
                 .scrollContentBackground(.hidden)
                 .scrollDismissesKeyboard(.interactively)
             }
+        }
+        // Filtering ~8,850 entries used to run inside `body`, on the main
+        // thread, on every re-render — including ones that didn't touch the
+        // search (issue #74). It now runs off-main, once per change of query,
+        // form factor, or catalog. `.task(id:)` cancels the previous run when
+        // the key changes, and a cancelled run never writes its result — so a
+        // slow earlier search can't land on top of a newer one.
+        .task(id: FilterKey(query: query, formFactor: formFactor, catalogCount: entries.count)) {
+            let query = query, formFactor = formFactor
+            let result = await Task.detached(priority: .userInitiated) {
+                AutoEQCatalog.filter(entries, query: query, formFactor: formFactor)
+            }.value
+            guard !Task.isCancelled else { return }
+            self.filtered = result
         }
     }
 
