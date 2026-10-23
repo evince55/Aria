@@ -135,9 +135,15 @@ def _reset_embedder() -> None:
     global _embedder
     _embedder = None
 
-# yt-dlp player clients tried in order. android_vr is fastest when it works;
-# fallbacks kick in automatically when YouTube breaks a client.
-_YTDL_PLAYER_CLIENTS = ["android_vr", "ios", "tv_embedded", "web"]
+# yt-dlp player clients tried in order; when two clients offer the same itag,
+# the earlier client's URL wins. The client hands the resolved googlevideo URL
+# straight to AVPlayer, so only clients whose URLs serve a plain ranged GET
+# are usable. As of 2026-10 (yt-dlp 2026.10.21): visionos URLs return 206
+# audio/mp4; android_vr only offers muxed itag 18, which googlevideo 403s;
+# ios is SABR-only (no URLs), web is images-only, tv_embedded was removed
+# from yt-dlp, and tv/mweb URLs 403 too. A 403 body is what AVPlayer reports
+# as "Cannot Open". android_vr stays as a last resort for metadata.
+_YTDL_PLAYER_CLIENTS = ["visionos", "android_vr"]
 
 # Cache key discriminator. The cache used to glob "{id}.*" and return an
 # arbitrary match, so two formats for one video collided and matches[0] was

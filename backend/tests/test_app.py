@@ -724,3 +724,34 @@ def test_cover_rate_limit_returns_429(client, monkeypatch):
     assert client.get("/api/cover", params={"title": "a", "artist": "b"}).status_code == 200
     assert client.get("/api/cover", params={"title": "c", "artist": "d"}).status_code == 200
     assert client.get("/api/cover", params={"title": "e", "artist": "f"}).status_code == 429
+
+
+# ---------------------------------------------------------------------------
+# yt-dlp player clients
+# ---------------------------------------------------------------------------
+
+def test_resolve_prefers_visionos_client(monkeypatch):
+    # The resolved googlevideo URL goes straight to AVPlayer. As of 2026-10
+    # only visionos URLs serve a plain ranged GET; android_vr's itag 18 URL
+    # is 403'd, which AVPlayer surfaces as "Cannot Open". Earlier clients win
+    # duplicate itags, so visionos must stay first.
+    seen = {}
+
+    class FakeYDL:
+        def __init__(self, opts):
+            seen["opts"] = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def extract_info(self, url, download):
+            return {"url": "https://x/y", "duration": 1, "title": "t"}
+
+    monkeypatch.setattr(appmod.yt_dlp, "YoutubeDL", FakeYDL)
+    appmod._resolve_sync("dQw4w9WgXcQ")
+    clients = seen["opts"]["extractor_args"]["youtube"]["player_client"]
+    assert clients[0] == "visionos"
+    assert "tv_embedded" not in clients  # removed from yt-dlp; only logs a warning
