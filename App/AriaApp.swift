@@ -16,7 +16,6 @@ struct AriaApp: App {
     @StateObject private var localLibraryManager: LocalLibraryManager
     @StateObject private var navigationCoordinator = NavigationCoordinator()
     @StateObject private var downloadManager = DownloadManager()
-    @StateObject private var proStore = ProStore()
     @StateObject private var smartPlaylistsManager = SmartPlaylistsManager(store: JSONFileStore(filename: "smart_playlists.json"))
     @StateObject private var savedEQProfilesManager = SavedEQProfilesManager(store: JSONFileStore(filename: "eq_profiles.json"))
     @StateObject private var librarySearchManager = LibrarySearchManager()
@@ -80,7 +79,6 @@ struct AriaApp: App {
                 .environmentObject(localLibraryManager)
                 .environmentObject(navigationCoordinator)
                 .environmentObject(downloadManager)
-                .environmentObject(proStore)
                 .environmentObject(smartPlaylistsManager)
                 .environmentObject(savedEQProfilesManager)
                 .environmentObject(librarySearchManager)

@@ -36,8 +36,7 @@ iOS 16.6+, Swift 5, no third-party dependencies.
 - **AutoEQ profiles** — browsable AutoEQ catalog; search your headphones
   and apply a measured correction curve in one tap, or import a profile.
 - **Offline downloads** — hold-to-queue with an audio-quality badge.
-- **Aria Pro** — StoreKit 2 one-time unlock gating parametric EQ + AutoEQ,
-  smart playlists, and M3U/folder import.
+- **Free** — every feature is included, with no purchases or subscription.
 
 ## Architecture
 

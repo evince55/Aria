@@ -8,7 +8,6 @@ struct LibraryView: View {
     @EnvironmentObject private var playlistsManager: PlaylistsManager
     @EnvironmentObject private var nav: NavigationCoordinator
     @EnvironmentObject private var downloadManager: DownloadManager
-    @EnvironmentObject private var proStore: ProStore
 
     /// One `.fileImporter` for all three import kinds. Stacking three of
     /// them on the same view is a SwiftUI trap: only the last one presents,
@@ -20,7 +19,6 @@ struct LibraryView: View {
     @State private var importError: String?
     @State private var importProgress: FolderImporter.Progress?
     @State private var importSummary: String?
-    @State private var showPaywall = false
     @State private var addToPlaylistTrack: LocalTrack?
     @State private var selectedTab: LibraryTab = .offlineTracks
     @Namespace private var tabIndicator
@@ -115,16 +113,14 @@ struct LibraryView: View {
                             Label("Import Files…", systemImage: "doc.badge.plus")
                         }
                         Button {
-                            if proStore.isPro { beginImport(.folder) } else { showPaywall = true }
+                            beginImport(.folder)
                         } label: {
-                            Label(proStore.isPro ? "Import Folder…" : "Import Folder… (Pro)",
-                                  systemImage: proStore.isPro ? "folder.badge.plus" : "lock.fill")
+                            Label("Import Folder…", systemImage: "folder.badge.plus")
                         }
                         Button {
-                            if proStore.isPro { beginImport(.m3u) } else { showPaywall = true }
+                            beginImport(.m3u)
                         } label: {
-                            Label(proStore.isPro ? "Import M3U Playlist…" : "Import M3U Playlist… (Pro)",
-                                  systemImage: proStore.isPro ? "list.bullet.rectangle" : "lock.fill")
+                            Label("Import M3U Playlist…", systemImage: "list.bullet.rectangle")
                         }
                     } label: {
                         Image(systemName: "plus")
@@ -148,9 +144,6 @@ struct LibraryView: View {
             case .failure(let error):
                 importError = error.localizedDescription
             }
-        }
-        .sheet(isPresented: $showPaywall) {
-            AriaProView()
         }
         .overlay(alignment: .bottom) {
             if let progress = importProgress {

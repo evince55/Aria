@@ -19,9 +19,6 @@ We do not operate any server. To exercise the server path, use the public demo o
 
 This is a third-party public demo populated with Creative Commons music. Aria connects to it over the standard Subsonic API, the same way it would connect to a server the user runs at home.
 
-IN-APP PURCHASE
-"Aria Pro" is a single non-consumable unlock (parametric EQ + AutoEQ, smart playlists, folder/M3U import). It can be tested with a sandbox tester account from More → Aria Pro. Restore Purchases is on the same sheet.
-
 PRIVACY
 There are no accounts, no analytics, and no data sent to the developer. Search text and library metadata are sent only to the server the user themselves configured. The Subsonic password is stored in the iOS Keychain and is never transmitted (salted-token authentication).
 

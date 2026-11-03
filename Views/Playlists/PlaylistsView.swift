@@ -7,12 +7,10 @@ struct PlaylistsView: View {
     @EnvironmentObject private var favoritesManager: FavoritesManager
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var smartPlaylistsManager: SmartPlaylistsManager
-    @EnvironmentObject private var proStore: ProStore
 
     @State private var selectedTab: PlaylistTab = .recentlyAdded
     @State private var smartEditorDraft: SmartPlaylist?
     @State private var selectedSmart: SmartPlaylist?
-    @State private var showSmartPaywall = false
     @State private var smartDeleteTarget: SmartPlaylist?
     @State private var showSmartDeleteAlert = false
     @State private var showNewPlaylistAlert = false
@@ -80,9 +78,6 @@ struct PlaylistsView: View {
         }
         .sheet(item: $selectedSmart) { playlist in
             SmartPlaylistDetailView(playlistID: playlist.id)
-        }
-        .sheet(isPresented: $showSmartPaywall) {
-            AriaProView()
         }
         .alert("Delete Smart Playlist", isPresented: $showSmartDeleteAlert) {
             Button("Cancel", role: .cancel) { smartDeleteTarget = nil }
@@ -358,10 +353,9 @@ struct PlaylistsView: View {
 
     // MARK: - Your Playlists
 
-    // MARK: - Smart playlists (Pro)
+    // MARK: - Smart playlists
 
-    /// Rule-based playlists that re-evaluate live. Creating/editing is a Pro
-    /// feature; viewing and playing existing ones is never locked.
+    /// Rule-based playlists that re-evaluate live.
     private var smartPlaylistsSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.sm) {
             SectionLabel(title: "Smart playlists", tokens: tokens)
@@ -393,11 +387,7 @@ struct PlaylistsView: View {
                     .buttonStyle(.plain)
                     .contextMenu {
                         Button {
-                            if proStore.isPro {
-                                smartEditorDraft = playlist
-                            } else {
-                                showSmartPaywall = true
-                            }
+                            smartEditorDraft = playlist
                         } label: {
                             Label("Edit Rules", systemImage: "slider.horizontal.3")
                         }
@@ -413,28 +403,15 @@ struct PlaylistsView: View {
 
                 Button {
                     Haptics.light()
-                    if proStore.isPro {
-                        smartEditorDraft = SmartPlaylist(name: "")
-                    } else {
-                        showSmartPaywall = true
-                    }
+                    smartEditorDraft = SmartPlaylist(name: "")
                 } label: {
                     HStack(spacing: DS.Spacing.md) {
-                        Image(systemName: proStore.isPro ? "plus.circle.fill" : "lock.fill")
+                        Image(systemName: "plus.circle.fill")
                             .foregroundColor(tokens.accent)
                             .frame(width: 32, height: 32)
                         Text("New Smart Playlist")
                             .font(DS.Typography.bodyEm)
                             .foregroundColor(tokens.textPrimary)
-                        if !proStore.isPro {
-                            Text("PRO")
-                                .font(DS.Typography.micro)
-                                .fontWeight(.bold)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(tokens.accent))
-                                .foregroundColor(.white)
-                        }
                         Spacer()
                     }
                     .padding(.horizontal, DS.Spacing.md)
@@ -442,9 +419,7 @@ struct PlaylistsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(proStore.isPro
-                                    ? "New smart playlist"
-                                    : "New smart playlist, requires Aria Pro")
+                .accessibilityLabel("New smart playlist")
             }
             .background(
                 RoundedRectangle(cornerRadius: DS.Radius.md, style: .continuous)

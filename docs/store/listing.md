@@ -60,8 +60,8 @@ BUILT FOR LISTENING
 • Sleep timer, playback speed, resume where you left off
 • Ask Your Library — describe what you feel like hearing, in your own words
 
-ARIA PRO
-A single one-time purchase unlocks the parametric EQ and AutoEQ catalogue, smart playlists, and folder and M3U import. No subscription. Everything else is free forever.
+FREE
+Every feature is included. No purchases, no subscription, no ads, no account.
 
 OPEN SOURCE
 Aria's source is public. If you'd rather build it yourself, you can.
@@ -77,17 +77,3 @@ flac,music player,equalizer,autoeq,navidrome,subsonic,hi-res,lossless,offline,se
 First release.
 ```
 
-## In-App Purchase (App Store Connect → In-App Purchases)
-
-| Field | Value |
-|---|---|
-| Type | Non-Consumable |
-| Reference name | Aria Pro |
-| Product ID | **decide with the bundle ID** — `Aria.storekit` and `Managers/ProStore.swift:25` currently say `com.chaitea321.aria.pro`; product IDs are permanent once created, so set it to `<your bundle id>.pro` and change both files before creating it |
-| Price | Tier for $9.99 (matches `Aria.storekit`) |
-| Display name (30 max) | `Aria Pro` |
-| Description (45 max) | `Parametric EQ, AutoEQ, smart playlists` |
-| Review screenshot | the paywall sheet (More → Aria Pro) |
-
-Opt into the **App Store Small Business Program** (Agreements, Tax, and Banking →
-Small Business Program) before the first sale — 15% commission instead of 30%.

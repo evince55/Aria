@@ -54,10 +54,6 @@ private struct NavigationCoordinatorKey: EnvironmentKey {
     @MainActor static var defaultValue: NavigationCoordinator { NavigationCoordinator() }
 }
 
-private struct ProStoreKey: EnvironmentKey {
-    @MainActor static var defaultValue: ProStore { ProStore() }
-}
-
 private struct SmartPlaylistsManagerKey: EnvironmentKey {
     @MainActor static var defaultValue: SmartPlaylistsManager { SmartPlaylistsManager() }
 }
@@ -106,10 +102,6 @@ extension EnvironmentValues {
     var navigationCoordinator: NavigationCoordinator {
         get { self[NavigationCoordinatorKey.self] }
         set { self[NavigationCoordinatorKey.self] = newValue }
-    }
-    var proStore: ProStore {
-        get { self[ProStoreKey.self] }
-        set { self[ProStoreKey.self] = newValue }
     }
     var smartPlaylistsManager: SmartPlaylistsManager {
         get { self[SmartPlaylistsManagerKey.self] }

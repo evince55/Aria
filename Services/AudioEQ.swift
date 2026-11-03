@@ -134,7 +134,7 @@ final class AudioEQ {
         }
     }
 
-    // MARK: - Parametric (Pro)
+    // MARK: - Parametric
 
     /// Reconfigures the AUNBandEQ from a parametric preset: per-band filter
     /// type, centre frequency, bandwidth (converted from Q), and gain, plus the

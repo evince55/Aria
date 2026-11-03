@@ -31,9 +31,8 @@ history — synced to the user's own server for "Ask Your Library".)
 ## Every other category: **Not collected**
 
 Contact info, health, financial, location, sensitive info, contacts, user
-content beyond the above, browsing history, identifiers, purchases (Apple
-handles the IAP; the app sees only an entitlement), usage data, diagnostics,
-other data — all **No**.
+content beyond the above, browsing history, identifiers, purchases, usage data,
+diagnostics, other data — all **No**.
 
 ## Tracking
 

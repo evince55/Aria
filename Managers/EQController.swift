@@ -85,7 +85,7 @@ final class EQController: ObservableObject {
         return apply(newBands)
     }
 
-    // MARK: - Parametric (Pro)
+    // MARK: - Parametric
 
     /// Activates a parametric curve. The EQ is always audible with a preset
     /// applied, so this enables if needed.

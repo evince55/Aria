@@ -2,7 +2,7 @@ import XCTest
 import AVFoundation
 @testable import Aria___Music_Browser
 
-/// Model, controller, and render coverage for the parametric EQ (Pro).
+/// Model, controller, and render coverage for the parametric EQ.
 final class ParametricEQTests: XCTestCase {
 
     private func preset(_ bands: [ParametricBand], preamp: Float = 0) -> ParametricEQPreset {
