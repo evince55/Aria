@@ -109,6 +109,8 @@ struct FullScreenPlayerView: View {
             switch sheet {
             case .equalizer:
                 EqualizerView()
+            case .speedAndPitch:
+                SpeedPitchSheet()
             case .addToPlaylist:
                 addToPlaylistSheet
             case .queue:
@@ -294,29 +296,18 @@ struct FullScreenPlayerView: View {
             }
             .accessibilityLabel("Equalizer")
 
-            Menu {
-                ForEach(PlayerManager.playbackRatePresets, id: \.self) { rate in
-                    Button {
-                        playerManager.setPlaybackRate(rate)
-                    } label: {
-                        if playerManager.playbackRate == rate {
-                            Label(speedLabel(rate), systemImage: "checkmark")
-                        } else {
-                            Text(speedLabel(rate))
-                        }
-                    }
-                }
-            } label: {
+            Button { nav.presentedSheet = .speedAndPitch } label: {
                 Text(speedLabel(playerManager.playbackRate))
                     .scaledFont(size: 15, weight: .semibold, relativeTo: .subheadline)
                     .monospacedDigit()
-                    .frame(minWidth: 34)
-                    .foregroundColor(playerManager.playbackRate == 1.0
+                    // Wide enough for "0.81×", so fine values don't shift the row.
+                    .frame(minWidth: 46)
+                    .foregroundColor(isTuningAtDefault
                                      ? themeManager.textPrimary
                                      : themeManager.theme.accentColor)
             }
-            .accessibilityLabel("Playback speed")
-            .accessibilityValue(speedLabel(playerManager.playbackRate))
+            .accessibilityLabel("Speed and pitch")
+            .accessibilityValue(tuningAccessibilityValue)
 
             // Share the song's name, not the thumbnail image. See
             // `Track.shareText` for why this is never a URL.
@@ -332,6 +323,17 @@ struct FullScreenPlayerView: View {
     /// "1×", "0.5×", "1.25×" — `%g` trims trailing zeros.
     private func speedLabel(_ rate: Float) -> String {
         "\(String(format: "%g", Double(rate)))×"
+    }
+
+    private var isTuningAtDefault: Bool {
+        playerManager.playbackRate == PlaybackTuning.defaultSpeed
+            && playerManager.playbackPitch == PlaybackTuning.defaultPitch
+    }
+
+    private var tuningAccessibilityValue: String {
+        let speed = speedLabel(playerManager.playbackRate)
+        guard playerManager.playbackPitch != PlaybackTuning.defaultPitch else { return speed }
+        return speed + ", pitch " + String(format: "%+.1f", playerManager.playbackPitch) + " semitones"
     }
 
     // MARK: - Add to Playlist Sheet

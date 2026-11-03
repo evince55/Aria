@@ -6,6 +6,7 @@ import SwiftUI
 /// driven by SwiftUI's `.sheet(item:)` modifier.
 enum AppSheet: Identifiable {
     case equalizer
+    case speedAndPitch
     case addToPlaylist
     case queue
     case missingTrackRepair(trackID: UUID)
@@ -13,6 +14,8 @@ enum AppSheet: Identifiable {
     var id: String {
         switch self {
         case .equalizer: return "equalizer"
+
+        case .speedAndPitch: return "speedAndPitch"
         case .addToPlaylist: return "addToPlaylist"
         case .queue: return "queue"
         case .missingTrackRepair(let trackID): return "missingTrackRepair:\(trackID.uuidString)"

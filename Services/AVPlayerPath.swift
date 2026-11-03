@@ -39,8 +39,8 @@ final class AVPlayerPath {
     /// YouTube DASH stream reports 2x its real length (song + equal silence).
     private var knownDuration: TimeInterval?
 
-    /// Real-time EQ tap attached to the current item's audio (streamed EQ).
-    /// nil until EQ is first enabled for an item.
+    /// Real-time tap on the current item's audio, carrying EQ and pitch shift.
+    /// nil until either is first needed for an item.
     private var eqTap: AudioEQTap?
 
     init(player: PlayerManager) {
@@ -93,9 +93,11 @@ final class AVPlayerPath {
         // the timeControlStatus rebuffer/recovery path, so a smaller lead buffer
         // is a safe trade for a faster start.
         playerItem?.preferredForwardBufferDuration = 2
-        // Preserve pitch when playing at a non-1x speed (otherwise fast/slow
-        // playback sounds chipmunk/detuned).
-        playerItem?.audioTimePitchAlgorithm = .timeDomain
+        // Speed changes pitch, like a record: no time-stretching, so nothing is
+        // lost to it. `.timeDomain`, used before, kept pitch by overlapping
+        // chunks, which is built for voice and stutters on music. The pitch
+        // slider is a separate shift on top of this, in the tap.
+        playerItem?.audioTimePitchAlgorithm = .varispeed
         avPlayer = AVPlayer(playerItem: playerItem)
         // Still let AVPlayer briefly wait for a minimal buffer rather than
         // starting and instantly stalling; the small preferredForwardBufferDuration
@@ -194,10 +196,11 @@ final class AVPlayerPath {
 
         addEndObserver(for: playerItem)
 
-        // Fresh item → fresh tap. Attach now if EQ is already on.
+        // Fresh item → fresh tap. Attach now if anything needs it, otherwise
+        // this item plays with no tap in its path at all.
         eqTap = nil
-        if player.eq.isEnabled {
-            attachEQ()
+        if player.eq.isEnabled || playbackPitch != 0 {
+            attachTap(eqBypassed: !player.eq.isEnabled)
         }
 
         if let seek = pendingSeek {
@@ -217,7 +220,7 @@ final class AVPlayerPath {
             if let tap = eqTap {
                 tap.setBypass(false)
             } else if player?.eq != nil {
-                attachEQ()
+                attachTap(eqBypassed: false)
             }
         } else {
             eqTap?.setBypass(true)
@@ -239,13 +242,14 @@ final class AVPlayerPath {
     }
 
     /// Builds an `AudioEQTap`, loads the current item's audio track, and sets the
-    /// resulting `audioMix` — applying EQ to the live stream with no download.
+    /// resulting `audioMix` — processing the live stream with no download.
     /// Reads the full EQ state (graphic bands + optional parametric curve) from
     /// the player's `EQController` so a fresh item starts with the right mode.
-    private func attachEQ() {
+    private func attachTap(eqBypassed: Bool) {
         guard let item = playerItem, let eq = player?.eq else { return }
         let tap = AudioEQTap(frequencies: PlayerManager.eqFrequencies, bands: eq.bands,
-                             bypassed: false, parametric: eq.parametric)
+                             bypassed: eqBypassed, parametric: eq.parametric,
+                             pitchSemitones: playbackPitch)
         eqTap = tap
         let asset = item.asset
         Task { @MainActor [weak self] in
@@ -287,6 +291,21 @@ final class AVPlayerPath {
         avPlayer?.defaultRate = rate
         if let player = avPlayer, player.rate > 0 {
             player.rate = rate
+        }
+    }
+
+    /// Selected pitch offset in semitones, applied to the current and all future
+    /// items. It sits on top of whatever pitch change the speed already causes.
+    private(set) var playbackPitch: Float = 0
+
+    /// Change the pitch offset. The first non-zero value on an item attaches the
+    /// tap; after that it's a parameter change.
+    func setPlaybackPitch(semitones: Float) {
+        playbackPitch = semitones
+        if let tap = eqTap {
+            tap.setPitch(semitones: semitones)
+        } else if semitones != 0, let eq = player?.eq {
+            attachTap(eqBypassed: !eq.isEnabled)
         }
     }
 

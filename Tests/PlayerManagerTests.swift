@@ -140,6 +140,24 @@ final class PlayerManagerTests: XCTestCase {
         XCTAssertEqual(player.playbackRate, 1.5)
     }
 
+    func test_PlaybackPitchDefaultsToZero() {
+        XCTAssertEqual(player.playbackPitch, 0)
+    }
+
+    func test_SetPlaybackPitchUpdatesValueAndClamps() {
+        player.setPlaybackPitch(2.5)
+        XCTAssertEqual(player.playbackPitch, 2.5, accuracy: 0.001)
+        player.setPlaybackPitch(99)
+        XCTAssertEqual(player.playbackPitch, 12, accuracy: 0.001)
+    }
+
+    func test_SpeedAndPitchAreIndependentValues() {
+        player.setPlaybackRate(0.75)
+        player.setPlaybackPitch(3)
+        XCTAssertEqual(player.playbackRate, 0.75, accuracy: 0.001)
+        XCTAssertEqual(player.playbackPitch, 3, accuracy: 0.001)
+    }
+
     func test_SetPlaybackRateClampsToSupportedRange() {
         player.setPlaybackRate(5.0)
         XCTAssertEqual(player.playbackRate, 2.0)
