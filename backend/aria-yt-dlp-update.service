@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=chait
-ExecStart=/home/chait/MusicAppIOS/backend/update-yt-dlp.sh
+User=eugene
+ExecStart=/home/eugene/MusicAppIOS/backend/update-yt-dlp.sh
 # Allow the script's `systemctl restart aria-backend` without an interactive
 # password by adding a sudoers rule, e.g.:
-#   chait ALL=(root) NOPASSWD: /usr/bin/systemctl restart aria-backend
+#   eugene ALL=(root) NOPASSWD: /usr/bin/systemctl restart aria-backend

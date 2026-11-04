@@ -117,8 +117,9 @@ sudo systemctl enable --now aria-healthcheck.timer
 ```
 
 - `update-yt-dlp.sh` upgrades yt-dlp in the venv and restarts the service only
-  when the version changed. Needs a sudoers NOPASSWD rule for the restart
-  (see the comment in `aria-yt-dlp-update.service`).
+  when the version changed, retrying on the next run if the restart fails.
+  Needs a sudoers NOPASSWD rule for the restart (see the comment in
+  `aria-yt-dlp-update.service`).
 - `healthcheck.sh` posts to `ARIA_ALERT_WEBHOOK` (Slack/Discord/ntfy) on
   failure. **Prefer running it off-box** (a down host can't probe itself) —
   point an external monitor at `https://<backend>/api/health`.
