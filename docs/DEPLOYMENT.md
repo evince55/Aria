@@ -68,13 +68,10 @@ configurations.
 ### B1. One-time prerequisites
 
 1. **Apple Developer Program** membership ($99/yr).
-2. **Change the bundle identifier.** `PRODUCT_BUNDLE_IDENTIFIER` is still the
-   `XCDevelopment.Aria-Music-Browser` placeholder. Pick a reverse-DNS ID you
-   control (e.g. `com.<yourname>.aria`), set it for the app + tests targets,
-   and register the App ID in App Store Connect.
-   *Deliberately not changed in this repo*: changing it re-identifies the app,
-   so existing device installs (and their imported libraries/settings) are
-   abandoned — do it once, when you actually go to the store.
+2. **Register the bundle identifier.** `PRODUCT_BUNDLE_IDENTIFIER` is
+   `com.evince55.aria` (tests: `com.evince55.aria.tests`). Register the App ID
+   in App Store Connect. The change re-identified the app, so an install under
+   the old ID keeps its own library and settings, and the new app starts empty.
 3. **An HTTPS backend.** Release builds have no ATS bypass. Options:
    - Revive the Render deployment (`backend/` deploys as-is; free tier works
      with cold starts), or

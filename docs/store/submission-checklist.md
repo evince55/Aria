@@ -11,12 +11,11 @@ done and referenced where it plugs in.
    add days. Nothing below works until this is done.
 3. **Check the name.** App Store Connect → My Apps → + → the Name field errors
    immediately if `Aria: Hi-Fi Music Player` is taken. Fallback in `listing.md`.
-4. **Decide the bundle identifier** — `com.<you>.aria`, lowercase, permanent.
-   Then in one change: set `PRODUCT_BUNDLE_IDENTIFIER` for the app and tests
-   targets in `Aria.xcodeproj/project.pbxproj`.
-   ⚠ Changing the bundle ID re-identifies the app: your existing install and
-   its library, playlists and settings are abandoned. Back up first.
-5. **Create the App ID** (Certificates, Identifiers & Profiles) with that bundle ID.
+4. **Bundle identifier: `com.evince55.aria`**, already set in
+   `Aria.xcodeproj/project.pbxproj`, and permanent once the app is on the store.
+   ⚠ It re-identified the app: an install under the old ID keeps its own library,
+   playlists and settings, and the new app starts empty. Back up first.
+5. **Create the App ID** (Certificates, Identifiers & Profiles) with `com.evince55.aria`.
 6. **Deploy the two web pages** to chai-homelab.com at `/aria/privacy` and
    `/aria/support` (`docs/store/web/`), and create the `aria@chai-homelab.com`
    alias in Cloudflare Email Routing — both pages link to it.
