@@ -516,7 +516,7 @@ final class PlayerManager: NSObject, ObservableObject {
         avPlayerPath.setEQEnabled(false)
     }
 
-    /// Applies an imported parametric curve (Aria Pro). Mirrors `applyEQPreset`
+    /// Applies an imported parametric curve. Mirrors `applyEQPreset`
     /// with the parametric payload: the live tap is reconfigured in place, and
     /// a fresh item picks the preset up via `attachEQ`.
     func applyParametricEQ(_ preset: ParametricEQPreset) {

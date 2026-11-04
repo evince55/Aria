@@ -6,7 +6,6 @@ struct PlaylistDetailView: View {
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
     @EnvironmentObject private var themeManager: ThemeManager
     @EnvironmentObject private var localLibraryManager: LocalLibraryManager
-    @EnvironmentObject private var proStore: ProStore
 
     let playlist: Playlist
 
@@ -15,7 +14,6 @@ struct PlaylistDetailView: View {
     @State private var renameText = ""
     @State private var exportDocument: M3UDocument?
     @State private var showExporter = false
-    @State private var showPaywall = false
     @Environment(\.dismiss) private var dismiss
 
     private var currentPlaylist: Playlist {
@@ -57,8 +55,7 @@ struct PlaylistDetailView: View {
                             Haptics.light()
                             exportM3U()
                         } label: {
-                            Label(proStore.isPro ? "Export as M3U" : "Export as M3U (Pro)",
-                                  systemImage: proStore.isPro ? "square.and.arrow.up" : "lock.fill")
+                            Label("Export as M3U", systemImage: "square.and.arrow.up")
                         }
                         .disabled(currentPlaylist.tracks.isEmpty)
                         Button(role: .destructive) {
@@ -99,9 +96,6 @@ struct PlaylistDetailView: View {
                           defaultFilename: currentPlaylist.name) { _ in
                 exportDocument = nil
             }
-            .sheet(isPresented: $showPaywall) {
-                AriaProView()
-            }
         }
     }
 
@@ -109,10 +103,6 @@ struct PlaylistDetailView: View {
     /// Library tracks are written as bare file names so the export re-imports
     /// cleanly on any device (absolute sandbox paths would not).
     private func exportM3U() {
-        guard proStore.isPro else {
-            showPaywall = true
-            return
-        }
         let byID = Dictionary(
             localLibraryManager.tracks.map { ("local:\($0.id.uuidString)", $0.fileName) },
             uniquingKeysWith: { a, _ in a }

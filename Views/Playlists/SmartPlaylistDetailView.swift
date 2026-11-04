@@ -12,11 +12,9 @@ struct SmartPlaylistDetailView: View {
     @EnvironmentObject private var downloadManager: DownloadManager
     @EnvironmentObject private var favoritesManager: FavoritesManager
     @EnvironmentObject private var recentlyPlayedManager: RecentlyPlayedManager
-    @EnvironmentObject private var proStore: ProStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var editorDraft: SmartPlaylist?
-    @State private var showPaywall = false
 
     private var tokens: DesignTokens { themeManager.tokens }
 
@@ -43,10 +41,8 @@ struct SmartPlaylistDetailView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         Haptics.light()
-                        if proStore.isPro, let playlist {
+                        if let playlist {
                             editorDraft = playlist
-                        } else {
-                            showPaywall = true
                         }
                     } label: {
                         Text("Edit")
@@ -59,9 +55,6 @@ struct SmartPlaylistDetailView: View {
         }
         .sheet(item: $editorDraft) { draft in
             SmartPlaylistEditorView(draft: draft)
-        }
-        .sheet(isPresented: $showPaywall) {
-            AriaProView()
         }
     }
 
