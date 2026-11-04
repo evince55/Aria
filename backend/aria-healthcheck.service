@@ -4,8 +4,8 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-User=chait
+User=eugene
 # Set ARIA_ALERT_WEBHOOK to a Slack/Discord/ntfy webhook to get pinged on
 # failure. ARIA_HEALTH_URL defaults to the local instance.
 # Environment=ARIA_ALERT_WEBHOOK=https://hooks.slack.com/services/XXX
-ExecStart=/home/chait/MusicAppIOS/backend/healthcheck.sh
+ExecStart=/home/eugene/MusicAppIOS/backend/healthcheck.sh
