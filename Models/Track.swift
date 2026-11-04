@@ -52,8 +52,8 @@ struct Track: Identifiable, Codable, Hashable {
         self.id = try c.decode(String.self, forKey: .id)
         self.title = try c.decode(String.self, forKey: .title)
         self.artist = try c.decode(String.self, forKey: .artist)
-        self.thumbnailURL = try c.decodeIfPresent(URL.self, forKey: .thumbnailURL)
-        self.localFileURL = try c.decodeIfPresent(URL.self, forKey: .localFileURL)
+        self.thumbnailURL = Self.inCurrentContainer(try c.decodeIfPresent(URL.self, forKey: .thumbnailURL))
+        self.localFileURL = Self.inCurrentContainer(try c.decodeIfPresent(URL.self, forKey: .localFileURL))
         self.isMissing = try c.decodeIfPresent(Bool.self, forKey: .isMissing) ?? false
         self.duration = try c.decodeIfPresent(Double.self, forKey: .duration)
         self.album = try c.decodeIfPresent(String.self, forKey: .album)
@@ -69,6 +69,21 @@ struct Track: Identifiable, Codable, Hashable {
         try c.encode(isMissing, forKey: .isMissing)
         try c.encodeIfPresent(duration, forKey: .duration)
         try c.encodeIfPresent(album, forKey: .album)
+    }
+
+    /// Re-points a persisted `file:` URL at the current Data container. iOS
+    /// changes the container's UUID on reinstall and update, so the absolute
+    /// path saved by an earlier install is stale even though the file moved
+    /// with the container. Same problem `LocalTrack` solves by storing file
+    /// names; `Track` keeps URLs because remote tracks need them.
+    private static func inCurrentContainer(_ url: URL?) -> URL? {
+        guard let url, url.isFileURL else { return url }
+        let path = url.path
+        guard let marker = path.range(of: "/Containers/Data/Application/"),
+              let insideContainer = path[marker.upperBound...].firstIndex(of: "/") else {
+            return url
+        }
+        return URL(fileURLWithPath: NSHomeDirectory() + path[insideContainer...], isDirectory: false)
     }
 
     var isLocal: Bool { localFileURL != nil }
