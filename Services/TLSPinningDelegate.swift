@@ -19,7 +19,8 @@ private extension Data {
 /// In Release builds, no pinning is performed — public CA-signed certs (Render,
 /// Google) work normally. In Debug builds, the bundled `cert.der` is loaded
 /// from the app bundle and any server chain containing a matching cert is
-/// accepted.
+/// accepted. The Release config excludes `cert.der` from the bundle outright
+/// (`EXCLUDED_SOURCE_FILE_NAMES`; gated by `scripts/verify-release.sh`).
 ///
 /// This is the only correct way to trust a self-signed cert on iOS 14+:
 /// `NSAllowsArbitraryLoads = true` disables ATS but does NOT bypass TLS

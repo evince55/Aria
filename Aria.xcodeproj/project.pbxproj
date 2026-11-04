@@ -447,6 +447,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = UMMQB88PD3;
 				ENABLE_PREVIEWS = YES;
+				EXCLUDED_SOURCE_FILE_NAMES = cert.der;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "Aria---Music-Browser-Info-Release.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Aria;

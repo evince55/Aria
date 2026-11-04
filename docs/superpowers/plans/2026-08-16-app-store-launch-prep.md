@@ -70,7 +70,7 @@ git fetch origin -q
 git worktree add .worktrees/store-readiness -b feat/store-readiness origin/main
 cd .worktrees/store-readiness
 # Local device-test IP (never committed — the Stop hook and step 5's grep both guard it)
-sed -i '' 's/192\.0\.2\.1/100.76.103.1/g' Aria---Music-Browser-Info.plist
+sed -i '' 's/192\.0\.2\.1/<your-tailscale-ip>/g' Aria---Music-Browser-Info.plist
 git update-index --assume-unchanged Aria---Music-Browser-Info.plist
 git ls-files -v Aria---Music-Browser-Info.plist   # expect: h Aria---Music-Browser-Info.plist
 ```
@@ -103,7 +103,7 @@ Expected: `** BUILD SUCCEEDED **` then `[1]`
 
 ```bash
 git add Aria.xcodeproj/project.pbxproj
-git diff --cached | grep -q '100\.76\.103\.1' && { echo 'REAL IP STAGED — abort'; exit 1; }
+git diff --cached | grep -qE '100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+' && { echo 'REAL IP STAGED — abort'; exit 1; }
 git commit -m "Ship v1 iPhone-only
 
 The project declared iPad support (TARGETED_DEVICE_FAMILY = 1,2) but has
@@ -254,7 +254,7 @@ Then view `/tmp/first-run.png` (the `Read` tool renders PNGs). Expected: the **L
 
 ```bash
 git add Managers/SettingsManager.swift App/AriaApp.swift Views/Root/ContentView.swift Tests/DefaultStartTabTests.swift
-git diff --cached | grep -q '100\.76\.103\.1' && { echo 'REAL IP STAGED — abort'; exit 1; }
+git diff --cached | grep -qE '100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+' && { echo 'REAL IP STAGED — abort'; exit 1; }
 git commit -m "Land new users on Library, not an empty Favorites
 
 DefaultStartTab had no Library case and defaulted to Favorites, so a
@@ -301,7 +301,7 @@ Repeat Task 2 Step 6's build/uninstall/install/launch/screenshot block. Expected
 
 ```bash
 git add Views/Library/LibraryView.swift
-git diff --cached | grep -q '100\.76\.103\.1' && { echo 'REAL IP STAGED — abort'; exit 1; }
+git diff --cached | grep -qE '100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+' && { echo 'REAL IP STAGED — abort'; exit 1; }
 git commit -m "Library empty state mentions the server option
 
 The first screen a new user (or a reviewer) sees should carry both
@@ -479,7 +479,7 @@ xcodebuild test -scheme AriaTests -project Aria.xcodeproj \
   -derivedDataPath build CODE_SIGNING_ALLOWED=NO 2>&1 \
   | grep -E "Executed [0-9]+ tests, with|TEST SUCCEEDED|TEST FAILED" | tail -2
 git add Aria---Music-Browser-Info-Release.plist scripts/verify-release.sh docs/DEPLOYMENT.md
-git diff --cached | grep -q '100\.76\.103\.1' && { echo 'REAL IP STAGED — abort'; exit 1; }
+git diff --cached | grep -qE '100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]+\.[0-9]+' && { echo 'REAL IP STAGED — abort'; exit 1; }
 git commit -m "Make the Release build provably clean
 
 scripts/verify-release.sh builds Release and asserts on the BUILT

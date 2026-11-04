@@ -78,10 +78,11 @@ So, three things:
    `TRUSTED_PROXY_COUNT` — the `CF-Connecting-IP` handling replaces it for the
    tunnel path.
 2. **Deploy the updated `app.py`.** This runbook ships with the `CF-Connecting-IP`
-   support; deploy it so rate limiting keys on real clients:
+   support; deploy it so rate limiting keys on real clients (`192.0.2.1` is the
+   repo's placeholder; substitute the homelab's real address):
    ```bash
-   scp Aria_Music_Browser/backend/app.py eugene@100.76.103.1:~/MusicAppIOS/backend/app.py
-   ssh eugene@100.76.103.1 "sudo systemctl restart aria-backend"
+   scp Aria_Music_Browser/backend/app.py eugene@192.0.2.1:~/MusicAppIOS/backend/app.py
+   ssh eugene@192.0.2.1 "sudo systemctl restart aria-backend"
    ```
 3. **Add an edge rate-limit rule** (recommended). Cloudflare dashboard →
    **Security → WAF → Rate limiting rules** on `api.chai-homelab.com`, e.g.
