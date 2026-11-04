@@ -39,11 +39,12 @@ final class PlayerManager: NSObject, ObservableObject {
     @Published var isRebuffering = false
 
     /// Current playback speed multiplier (session-scoped; resets to 1x on
-    /// launch). Applied to the AVPlayer via `defaultRate`, pitch-preserved.
-    @Published private(set) var playbackRate: Float = 1.0
+    /// launch). Applied to the AVPlayer via `defaultRate`; pitch follows it.
+    @Published private(set) var playbackRate: Float = PlaybackTuning.defaultSpeed
 
-    /// Available speed presets shown in the player's speed menu.
-    static let playbackRatePresets: [Float] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+    /// Pitch offset in semitones, on top of the change speed causes
+    /// (session-scoped, like `playbackRate`). 0 means no pitch processing.
+    @Published private(set) var playbackPitch: Float = PlaybackTuning.defaultPitch
 
     /// High-frequency playback position + track length, split into its own
     /// observable so the 4 Hz time observer re-renders only the scrubber, not
@@ -492,10 +493,17 @@ final class PlayerManager: NSObject, ObservableObject {
     /// the AVPlayer and updates Now Playing so the lock-screen clock stays in
     /// sync at non-1x rates.
     func setPlaybackRate(_ rate: Float) {
-        let clamped = min(max(rate, 0.5), 2.0)
-        playbackRate = clamped
-        avPlayerPath.setPlaybackRate(clamped)
+        let snapped = PlaybackTuning.speed(rate)
+        playbackRate = snapped
+        avPlayerPath.setPlaybackRate(snapped)
         nowPlaying.updateNowPlaying()
+    }
+
+    /// Set the pitch offset in semitones (clamped to the supported range).
+    func setPlaybackPitch(_ semitones: Float) {
+        let snapped = PlaybackTuning.pitch(semitones)
+        playbackPitch = snapped
+        avPlayerPath.setPlaybackPitch(semitones: snapped)
     }
 
     func applyEQPreset(_ gains: [Float]) {
