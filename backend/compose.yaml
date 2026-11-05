@@ -1,0 +1,57 @@
+# Aria backend with an optional Cloudflare Tunnel. See docs/SELF-HOSTING.md.
+#
+# All three services share one network namespace, owned by `network`:
+#   - cloudflared reaches the backend at localhost:8000. The backend trusts
+#     Cloudflare's client IP header only from a loopback peer, so per-client rate
+#     limiting needs them to share localhost.
+#   - A namespace is lost when its owner restarts. `network` does nothing and
+#     should never restart, so a backend restart cannot cut off the tunnel.
+name: aria
+
+x-hardening: &hardening
+  restart: unless-stopped
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  network:
+    <<: *hardening
+    image: registry.k8s.io/pause:3.10
+    ports:
+      # Local checks only. The tunnel is the public way in.
+      - "127.0.0.1:${ARIA_LOCAL_PORT:-8000}:8000"
+
+  backend:
+    <<: *hardening
+    build: .
+    image: aria-backend:local
+    network_mode: service:network
+    depends_on: [network]
+    stop_grace_period: 15s
+    environment:
+      ARIA_API_KEY: ${ARIA_API_KEY:?Run ./setup.sh first, or set ARIA_API_KEY in .env}
+      MAX_CACHE_GB: ${MAX_CACHE_GB:-5}
+      YTDLP_UPDATE_INTERVAL_SECONDS: ${YTDLP_UPDATE_INTERVAL_SECONDS:-86400}
+    volumes:
+      - aria-data:/data
+
+  # Enabled by COMPOSE_PROFILES=tunnel, which setup.sh writes when given a token.
+  cloudflared:
+    <<: *hardening
+    image: cloudflare/cloudflared:2026.10.7
+    profiles: [tunnel]
+    network_mode: service:network
+    depends_on:
+      backend:
+        condition: service_healthy
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+
+volumes:
+  aria-data:

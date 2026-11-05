@@ -73,8 +73,9 @@ configurations.
    in App Store Connect. The change re-identified the app, so an install under
    the old ID keeps its own library and settings, and the new app starts empty.
 3. **An HTTPS backend.** Release builds have no ATS bypass. Options:
-   - Revive the Render deployment (`backend/` deploys as-is; free tier works
-     with cold starts), or
+   - Run the Docker setup on a machine at home ([`SELF-HOSTING.md`](SELF-HOSTING.md)).
+     Rented hosts such as Render are a poor fit, because YouTube heavily
+     scrutinizes data-center IP addresses, or
    - Put the homelab behind a TLS reverse proxy (Caddy/Traefik with a real
      cert, or Tailscale Funnel for a public HTTPS URL).
    Set the URL in `ARIA_BACKEND_URL` of the **Release** plist — or ship with it

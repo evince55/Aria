@@ -1,0 +1,6 @@
+# Only these files reach the build, so .env and caches can never enter an image.
+*
+!requirements.txt
+!app.py
+!library_index.py
+!docker-entrypoint.sh
