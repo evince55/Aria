@@ -494,7 +494,7 @@ final class PlayerManagerTests: XCTestCase {
         let store = InMemoryKeyValueStore(
             seed: try! SchemaStore.encode([rec], schemaVersion: DownloadManager.schemaVersion))
         let downloads = DownloadManager(store: store, downloadsDirectory: dir,
-                                        urlSession: mockSession, backendURL: "http://t", apiKey: nil)
+                                        urlSession: mockSession, resolveBackendURL: { "http://t" }, resolveAPIKey: { nil })
         player.configureDownloads(downloads)
 
         let before = mockSession.recordedRequests.count
