@@ -27,8 +27,10 @@ final class DownloadManager: ObservableObject {
     private let store: KeyValueStore
     private let downloadsDir: URL
     private let urlSession: URLSessionProtocol
-    private let backendURL: String
-    private let apiKey: String?
+    /// Read at the start of each download, never stored: this manager is built
+    /// once at app launch, usually before a new user has entered their server.
+    private let resolveBackendURL: () -> String
+    private let resolveAPIKey: () -> String?
     private var debouncer: Debouncer!
     private var byID: [String: DownloadRecord] = [:]
 
@@ -51,15 +53,15 @@ final class DownloadManager: ObservableObject {
         store: KeyValueStore = JSONFileStore(filename: "downloads.json"),
         downloadsDirectory: URL? = nil,
         urlSession: URLSessionProtocol = DownloadManager.defaultSession(),
-        backendURL: String = PlayerManager.backendURL,
-        apiKey: String? = PlayerManager.apiKey
+        resolveBackendURL: @escaping () -> String = { BackendConfig.baseURL },
+        resolveAPIKey: @escaping () -> String? = { BackendConfig.apiKey }
     ) {
         self.store = store
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         self.downloadsDir = downloadsDirectory ?? docs.appendingPathComponent("Downloads", isDirectory: true)
         self.urlSession = urlSession
-        self.backendURL = backendURL
-        self.apiKey = apiKey
+        self.resolveBackendURL = resolveBackendURL
+        self.resolveAPIKey = resolveAPIKey
         try? FileManager.default.createDirectory(at: self.downloadsDir, withIntermediateDirectories: true)
         self.debouncer = Debouncer(delay: 0.5) { [weak self] in self?.performSave() }
         load()
@@ -104,13 +106,17 @@ final class DownloadManager: ObservableObject {
         active.insert(id)
         defer { active.remove(id) }
 
+        // Both requests must go to the same server, even if Settings changes mid-download.
+        let backendURL = resolveBackendURL()
+        let apiKey = resolveAPIKey()
+
         do {
             // 1. Ask the backend to download + validate + cache; get the stream path.
             guard let playURL = URL(string: "\(backendURL)/api/play?video_id=\(id)") else {
                 throw DownloadError.badEndpoint
             }
             let (playData, playResp) = try await withRetry {
-                try await self.urlSession.data(for: .backendGET(playURL, apiKey: self.apiKey))
+                try await self.urlSession.data(for: .backendGET(playURL, apiKey: apiKey))
             }
             try Self.validate(playResp, playData)
             guard let json = try? JSONSerialization.jsonObject(with: playData) as? [String: Any],
@@ -123,7 +129,7 @@ final class DownloadManager: ObservableObject {
                 throw DownloadError.badEndpoint
             }
             let (audio, audioResp) = try await withRetry {
-                try await self.urlSession.data(for: .backendGET(streamURL, apiKey: self.apiKey))
+                try await self.urlSession.data(for: .backendGET(streamURL, apiKey: apiKey))
             }
             try Self.validate(audioResp, audio)
             guard audio.count >= Self.minValidBytes else { throw DownloadError.tooSmall }
