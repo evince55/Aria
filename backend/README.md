@@ -1,5 +1,9 @@
 # Aria Backend
 
+> To run your own server, use the Docker setup in
+> [`docs/SELF-HOSTING.md`](../docs/SELF-HOSTING.md). The rest of this page is for
+> developing the backend and for the maintainer's homelab deployment.
+
 FastAPI + yt-dlp service that resolves/streams YouTube audio for the Aria iOS
 app. This directory is the **single source of truth** for the backend — it is
 version-controlled here and deployed to the homelab by copying `app.py`.

@@ -30,6 +30,33 @@ jobs:
         working-directory: backend
         run: python -m pytest tests/ -q
 
+  docker:
+    name: Docker self-hosting (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-latest }
+          - { arch: arm64, runner: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the setup script
+        working-directory: backend
+        run: |
+          printf 'example-token\n' | ./setup.sh > /dev/null
+          grep -Eq '^ARIA_API_KEY=[0-9a-f]{64}$' .env
+          grep -q '^TUNNEL_TOKEN=example-token$' .env
+          grep -q '^COMPOSE_PROFILES=tunnel$' .env
+          [ "$(stat -c %a .env)" = "600" ]
+          if ./setup.sh < /dev/null > /dev/null 2>&1; then exit 1; fi
+          docker compose config --quiet
+          rm .env
+      - name: Run the smoke test
+        env:
+          SMOKE_RESTART_DOCKER: "1"
+        run: bash backend/tests/docker_smoke.sh
+
   ios:
     name: iOS (xcodebuild test)
     # macos-15 ships Xcode 26.3, below the Xcode 26.5+ this project targets
