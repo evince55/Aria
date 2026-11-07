@@ -424,7 +424,7 @@ to:
 
 ```xml
 <key>ARIA_HOMELAB_HOST</key>
-<string>100.76.103.1</string>     <!-- your Tailscale IP -->
+<string>100.x.y.z</string>     <!-- your Tailscale IP -->
 ```
 
 One-line change. `git status` will show this as a local modification

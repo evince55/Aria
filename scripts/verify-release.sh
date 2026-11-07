@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds Aria with the Release configuration and asserts on the BUILT
-# product's Info.plist — not the source plists — so what's checked is what
-# would be archived. Run before every App Store submission:
+# product's Info.plist and bundled files — not the source plists — so what's
+# checked is what would be archived. Run before every App Store submission:
 #
 #     scripts/verify-release.sh
 #
@@ -73,6 +73,24 @@ fi
 # 8. Version fields exist (App Store Connect rejects an upload without them).
 [[ -n "$(get CFBundleShortVersionString)" && -n "$(get CFBundleVersion)" ]] || fail "missing CFBundleShortVersionString / CFBundleVersion"
 pass "version $(get CFBundleShortVersionString) ($(get CFBundleVersion))"
+
+# 9. The dev TLS cert stays out of the bundle. Its CN/SAN name the backend's
+# tailnet address, and Release never loads it (TLSPinningDelegate is #if DEBUG).
+CERTS="$(find "$APP" -iname 'cert.der')"
+[[ -z "$CERTS" ]] || fail "dev certificate bundled: ${CERTS#"$APP"/} — check EXCLUDED_SOURCE_FILE_NAMES on the Release config"
+pass "no cert.der in the bundle"
+
+# 10. No tailnet address in ANY bundled file, whatever it's called. Matches the
+# whole Tailscale CGNAT range (100.64.0.0/10) so this script never has to name a
+# real host; for the same reason a failure prints the file, never the match.
+# Each file is scanned as raw bytes and again with NULs dropped, which catches
+# UTF-16 strings in binary plists. Compressed payloads (Assets.car, PNGs) are opaque.
+LEAKS="$(find "$APP" -type f -exec perl -0777 -ne '
+  print "$ARGV\n" if ($_ . "\n" . (s/\0//gr)) =~
+    /(?<![0-9.])100\.(?:6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.[0-9]{1,3}\.[0-9]{1,3}(?!\.?[0-9])/;
+' {} +)"
+[[ -z "$LEAKS" ]] || fail "tailnet address (100.64.0.0/10) found in: ${LEAKS//"$APP"\//}"
+pass "no tailnet address in any bundled file"
 
 echo
 echo "Release product is clean."
