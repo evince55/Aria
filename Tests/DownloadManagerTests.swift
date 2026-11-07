@@ -21,7 +21,7 @@ final class DownloadManagerTests: XCTestCase {
 
     private func makeManager() -> DownloadManager {
         DownloadManager(store: store, downloadsDirectory: tmp, urlSession: session,
-                        backendURL: "http://test.local", apiKey: nil)
+                        resolveBackendURL: { "http://test.local" }, resolveAPIKey: { nil })
     }
 
     private func track(_ id: String = "dQw4w9WgXcQ") -> Track {
@@ -42,6 +42,31 @@ final class DownloadManagerTests: XCTestCase {
             }
             return (audio, self.ok(url))
         }
+    }
+
+    /// Regression: `DownloadManager` is built once at app launch, normally before
+    /// a new user has entered a server. A download must use the server and key
+    /// configured now, not the placeholder resolved at launch, which iOS rejects
+    /// in Release builds as an App Transport Security violation.
+    func test_downloadUsesServerConfiguredAfterInit() async {
+        let defaults = UserDefaults.standard
+        let keys = [BackendConfig.urlOverrideKey, BackendConfig.apiKeyOverrideKey]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer { for (key, value) in zip(keys, saved) { defaults.set(value, forKey: key) } }
+        keys.forEach { defaults.removeObject(forKey: $0) }
+
+        wireHappyPath()
+        let m = DownloadManager(store: store, downloadsDirectory: tmp, urlSession: session)
+
+        defaults.set("https://server.example", forKey: BackendConfig.urlOverrideKey)
+        defaults.set("entered-after-launch", forKey: BackendConfig.apiKeyOverrideKey)
+        await m.download(track())
+
+        let requests = session.recordedRequestObjects
+        XCTAssertEqual(requests.map(\.url?.host), ["server.example", "server.example"])
+        XCTAssertEqual(requests.map { $0.value(forHTTPHeaderField: "X-API-Key") },
+                       ["entered-after-launch", "entered-after-launch"])
+        XCTAssertTrue(m.isDownloaded("dQw4w9WgXcQ"))
     }
 
     func test_downloadWritesRecordAndFile() async {
@@ -82,7 +107,7 @@ final class DownloadManagerTests: XCTestCase {
         let seeded = InMemoryKeyValueStore(
             seed: try! SchemaStore.encode([rec], schemaVersion: DownloadManager.schemaVersion))
         let m = DownloadManager(store: seeded, downloadsDirectory: tmp, urlSession: session,
-                                backendURL: "http://t", apiKey: nil)
+                                resolveBackendURL: { "http://t" }, resolveAPIKey: { nil })
         XCTAssertTrue(m.records.isEmpty)  // file never existed → dropped
         XCTAssertNil(m.localURL(for: "dQw4w9WgXcQ"))
     }

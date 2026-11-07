@@ -28,13 +28,14 @@ CI (`.github/workflows/ci.yml`) runs `py_compile` + this suite on every push/PR.
 
 ## Deploy to the homelab
 
-The backend is **not** packaged — deploy is a file copy plus a service restart:
+The backend is **not** packaged — deploy is a file copy plus a service restart.
+`192.0.2.1` below is the repo's placeholder; substitute the homelab's real address:
 
 ```bash
 scp ~/MusicAppIOS/Aria_Music_Browser/backend/app.py \
     ~/MusicAppIOS/Aria_Music_Browser/backend/library_index.py \
-    eugene@100.76.103.1:~/MusicAppIOS/backend/
-ssh eugene@100.76.103.1 "sudo systemctl restart aria-backend"
+    eugene@192.0.2.1:~/MusicAppIOS/backend/
+ssh eugene@192.0.2.1 "sudo systemctl restart aria-backend"
 ```
 
 > `library_index.py` (the "Ask Your Library" search index) ships **alongside**
@@ -48,7 +49,7 @@ ssh eugene@100.76.103.1 "sudo systemctl restart aria-backend"
 > found stuck on that stale copy for exactly this reason. The root `app.py` has
 > since been removed and replaced with a `DO_NOT_DEPLOY_FROM_HERE.txt` pointer.
 >
-> Verify a deploy actually took: `curl http://100.76.103.1:8000/api/metrics`
+> Verify a deploy actually took: `curl http://192.0.2.1:8000/api/metrics`
 > returns `200` (not `404`) and `/api/health` includes `version` + `uptime_seconds`.
 >
 > The systemd unit runs as **`User=eugene`** from **`/home/eugene/MusicAppIOS/backend`**

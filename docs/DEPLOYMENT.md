@@ -93,7 +93,8 @@ configurations.
       *built* Info.plist: no ATS bypass or exception domains, empty
       `ARIA_BACKEND_URL`, placeholder homelab host, no API key, export
       compliance answered, iPhone-only, privacy manifest bundled, real
-      bundle ID, version fields present
+      bundle ID, version fields present; and on the bundle's files: no
+      `cert.der`, no tailnet (100.64.0.0/10) address in any of them
 - [ ] Privacy manifest present in bundle (`PrivacyInfo.xcprivacy`) — App Store
       Connect **App Privacy** answers must match it: *Search History* and
       *Product Interaction*, purpose **App Functionality**, **not** linked to

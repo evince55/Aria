@@ -12,7 +12,7 @@ To use a Navidrome or other Subsonic server instead, you don't need this page. S
   with Compose, and x86-64 and 64-bit ARM both work. Use a home connection, because
   YouTube heavily scrutinizes data-center IP addresses and may block a rented server.
 - **A domain on Cloudflare.** The free plan is enough.
-- About 2 GB of disk for the image, plus 5 GB for the song cache.
+- About 300 MB of disk for the image, plus up to 5 GB for the song cache.
 
 ## Set it up
 
